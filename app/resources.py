@@ -16,7 +16,7 @@ import streamlit as st
 
 from cogexp.config.loader import Catalog, default_root, load_catalog
 from cogexp.domain.clock import Clock, SystemClock
-from cogexp.service import ParticipantService
+from cogexp.service import ExperimenterService, ParticipantService
 from cogexp.storage.repository import SqliteRepository
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +48,10 @@ def clock() -> Clock:
 
 def service() -> ParticipantService:
     return ParticipantService(catalog(), repository(), clock())
+
+
+def experimenter_service() -> ExperimenterService:
+    return ExperimenterService(repository(), clock())
 
 
 def admin_password() -> str | None:

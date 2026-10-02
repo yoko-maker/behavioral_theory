@@ -10,7 +10,7 @@ from streamlit.testing.v1 import AppTest
 
 from cogexp.domain.clock import FakeClock
 from cogexp.storage.repository import SqliteRepository
-from tests.conftest import MakeExperiments
+from tests.conftest import MakeExperiments, open_experiment
 
 APP = Path(__file__).resolve().parents[2] / "app" / "main.py"
 TEST_CLOCK = "_test_clock"  # app/state.py と一致させる
@@ -22,10 +22,14 @@ Setup = Callable[..., Path]
 def setup(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, make_experiments: MakeExperiments
 ) -> Setup:
-    def _setup(**kwargs: object) -> Path:
+    def _setup(*, closed: bool = False, **kwargs: object) -> Path:
         monkeypatch.setenv("COGEXP_EXPERIMENTS_DIR", str(make_experiments(**kwargs)))
+        kwargs["_closed"] = closed
         monkeypatch.setenv("COGEXP_DATA_DIR", str(tmp_path / "data"))
-        return tmp_path / "data" / "cogexp.sqlite"
+        db = tmp_path / "data" / "cogexp.sqlite"
+        if kwargs.pop("_closed", False) is False:
+            open_experiment(SqliteRepository(db))
+        return db
 
     return _setup
 
@@ -125,3 +129,46 @@ def test_timeout_advances_without_answer(setup: Setup) -> None:
     assert (t["outcome"], t["is_correct"]) == ("timeout", None)
     # 確信度を飛ばして次の問題へ
     assert at.caption[0].value == "問題 2 / 2"
+
+
+def test_closed_experiment_shows_notice(setup: Setup) -> None:
+    db = setup(closed=True)
+    at = _start()
+    assert "受付を行っていません" in _text(at)
+    assert not [b for b in at.button if b.label == "次へ"]
+    assert SqliteRepository(db).read_table("participants") == []
+
+
+def test_reload_is_recorded_as_abort(setup: Setup) -> None:
+    db = setup()
+    at = _to_first_trial(_start())
+    pid = at.query_params["pid"][0]
+    # 再読み込み相当：新しいセッションで同じ URL（?pid=）を開く
+    reloaded = AppTest.from_file(str(APP), default_timeout=30)
+    reloaded.query_params["pid"] = pid
+    reloaded.run()
+    assert not reloaded.exception
+    assert "中断されました" in _text(reloaded)
+    p = SqliteRepository(db).get_participant(pid)
+    assert p is not None and (p["status"], p["abort_reason"]) == ("aborted", "reload")
+
+
+def test_review_flow_shows_initial_answer(setup: Setup) -> None:
+    db = setup(practice=(), allow_revision=True, collect_confidence=False)
+    at = _to_first_trial(_start())
+    at.radio[0].set_value("conjunction").run()
+    _click(at, "回答する")
+    at.text_input[0].input("100").run()
+    _click(at, "回答する")
+    assert "回答の見直し" in _text(at)
+    _click(at, "見直しを始める")
+    assert any("最初の回答：リンダは銀行員で" in i.value for i in at.info)
+    assert at.radio[0].value == "conjunction"  # 初回回答が選択済み
+    at.radio[0].set_value("single").run()
+    _click(at, "回答する")
+    assert at.text_input[0].value == "100"
+    at.text_input[0].input("50").run()
+    _click(at, "回答する")
+    assert "ご協力ありがとうございました" in _text(at)
+    revised = [r for r in SqliteRepository(db).read_table("trials") if r["attempt"] == "revised"]
+    assert sorted(r["is_correct"] for r in revised) == [True, True]

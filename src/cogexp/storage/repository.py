@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import datetime
 from enum import StrEnum
@@ -26,14 +26,25 @@ _SQL_TYPES = {
     "datetime": "TEXT",
     "json": "TEXT",
 }
-_PRIMARY_KEYS = {"participants": "participant_id", "trials": "trial_id", "events": "event_id"}
+_PRIMARY_KEYS = {
+    "participants": "participant_id",
+    "trials": "trial_id",
+    "events": "event_id",
+    "experiment_status_log": "log_id",
+}
 _UNIQUE = {"trials": ("submission_id",)}
 
 Row = Mapping[str, object]
+# (condition_id, order_index) -> 割当人数
+CellCounts = dict[tuple[str, int], int]
 
 
 class ConsentRequiredError(Exception):
     """同意済みでない参加者のデータを保存しようとした。"""
+
+
+class ParticipantAbortedError(Exception):
+    """中断済みの参加者のデータを保存しようとした（別タブ・再読み込み後の元のタブなど）。"""
 
 
 class SchemaMismatchError(ValueError):
@@ -121,11 +132,14 @@ class SqliteRepository:
             )
 
     @contextmanager
-    def _tx(self) -> Iterator[sqlite3.Connection]:
+    def _tx(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
         # Streamlit はスレッドをまたぐため、操作ごとに接続を開く
         conn = sqlite3.connect(self.path, timeout=10)
         try:
             with conn:
+                if immediate:
+                    # 読み取りから書き込みまでを他の書き込みと直列化する（割当の集計など）
+                    conn.execute("BEGIN IMMEDIATE")
                 yield conn
         finally:
             conn.close()
@@ -146,24 +160,88 @@ class SqliteRepository:
         if found is None or found[0] != "agreed":
             raise ConsentRequiredError(f"参加者 {participant_id} は同意済みでない")
 
+    @classmethod
+    def _require_active(cls, conn: sqlite3.Connection, participant_id: object) -> None:
+        cls._require_consent(conn, participant_id)
+        cur = conn.execute(
+            "SELECT status FROM participants WHERE participant_id = ?", (participant_id,)
+        )
+        if cur.fetchone()[0] == "aborted":
+            raise ParticipantAbortedError(f"参加者 {participant_id} は中断済み")
+
     def create_participant(self, row: Row) -> None:
         if row.get("consent_status") != "agreed":
             raise ConsentRequiredError("参加者レコードは同意時にのみ作成する")
         with self._tx() as conn:
             self._insert(conn, "participants", row)
 
+    def create_participant_assigned(
+        self,
+        experiment_id: str,
+        active_since: datetime,
+        build_row: Callable[[CellCounts], Row],
+    ) -> Row:
+        """現在の割当人数を集計し、build_row が作った参加者行を同じトランザクションで保存する。
+
+        数えるのは completed と、active_since 以降に開始した in_progress（中断者・放置者は除く）。
+        """
+        with self._tx(immediate=True) as conn:
+            cur = conn.execute(
+                "SELECT condition_id, order_index, COUNT(*) FROM participants"
+                " WHERE experiment_id = ? AND (status = 'completed'"
+                " OR (status = 'in_progress' AND created_at >= ?))"
+                " GROUP BY condition_id, order_index",
+                (experiment_id, active_since.isoformat()),
+            )
+            counts: CellCounts = {(c, int(k)): int(n) for c, k, n in cur.fetchall()}
+            row = build_row(counts)
+            if row.get("consent_status") != "agreed":
+                raise ConsentRequiredError("参加者レコードは同意時にのみ作成する")
+            self._insert(conn, "participants", row)
+        return row
+
+    def get_participant(self, participant_id: str) -> dict[str, object] | None:
+        rows = self._select("participants", "participant_id = ?", (participant_id,))
+        return rows[0] if rows else None
+
+    def mark_aborted(self, participant_id: str, at: datetime, reason: str) -> bool:
+        """進行中の参加者を中断にする。進行中でなければ何もせず False。"""
+        with self._tx() as conn:
+            cur = conn.execute(
+                "UPDATE participants SET status = 'aborted', aborted_at = ?, abort_reason = ?"
+                " WHERE participant_id = ? AND status = 'in_progress'",
+                (at.isoformat(), reason, participant_id),
+            )
+            return cur.rowcount == 1
+
+    def append_status(self, row: Row) -> None:
+        with self._tx() as conn:
+            self._insert(conn, "experiment_status_log", row)
+
+    def is_accepting(self, experiment_id: str) -> bool:
+        """最新のログで判定する。ログがなければ受付停止（既定）。"""
+        with self._tx() as conn:
+            cur = conn.execute(
+                "SELECT accepting FROM experiment_status_log WHERE experiment_id = ?"
+                " ORDER BY changed_at DESC, rowid DESC LIMIT 1",
+                (experiment_id,),
+            )
+            found = cur.fetchone()
+        return bool(found[0]) if found else False
+
     def set_participant_status(
         self, participant_id: str, status: str, completed_at: datetime | None
     ) -> None:
         with self._tx() as conn:
             conn.execute(
-                "UPDATE participants SET status = ?, completed_at = ? WHERE participant_id = ?",
+                "UPDATE participants SET status = ?, completed_at = ?"
+                " WHERE participant_id = ? AND status = 'in_progress'",
                 (status, completed_at.isoformat() if completed_at else None, participant_id),
             )
 
     def save_trial(self, row: Row) -> SaveResult:
         with self._tx() as conn:
-            self._require_consent(conn, row.get("participant_id"))
+            self._require_active(conn, row.get("participant_id"))
             try:
                 self._insert(conn, "trials", row)
             except sqlite3.IntegrityError:
@@ -180,6 +258,9 @@ class SqliteRepository:
     def set_confidence(self, trial_id: str, confidence: int, timing: str) -> bool:
         """確信度を一度だけ設定する。既に設定済みなら False（上書きしない）。"""
         with self._tx() as conn:
+            cur = conn.execute("SELECT participant_id FROM trials WHERE trial_id = ?", (trial_id,))
+            if (found := cur.fetchone()) is not None:
+                self._require_active(conn, found[0])
             cur = conn.execute(
                 "UPDATE trials SET confidence = ?, confidence_timing = ?"
                 " WHERE trial_id = ? AND confidence IS NULL",
@@ -191,15 +272,23 @@ class SqliteRepository:
         rows = list(rows)
         with self._tx() as conn:
             for pid in {r.get("participant_id") for r in rows}:
-                self._require_consent(conn, pid)
+                self._require_active(conn, pid)
             for r in rows:
                 self._insert(conn, "events", r)
         return len(rows)
 
     def read_table(self, table: str) -> list[dict[str, object]]:
+        return self._select(table)
+
+    def _select(
+        self, table: str, where: str | None = None, params: tuple[object, ...] = ()
+    ) -> list[dict[str, object]]:
         columns = TABLES[table]
+        sql = f"SELECT {', '.join(c.name for c in columns)} FROM {table}"
+        if where:
+            sql += f" WHERE {where}"
         with self._tx() as conn:
-            cur = conn.execute(f"SELECT {', '.join(c.name for c in columns)} FROM {table}")
+            cur = conn.execute(sql, params)
             return [
                 {c.name: _decode_value(c, v) for c, v in zip(columns, rec, strict=True)}
                 for rec in cur.fetchall()

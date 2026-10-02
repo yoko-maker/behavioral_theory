@@ -4,6 +4,8 @@ title: 予備実験 v1
 # 練習は割り当てられた条件と同じ時間設定・確信度設定で提示する
 practice: [practice/choice@1, practice/numeric@1]
 confidence_levels: 5
+# 本課題の順序（リンダ先／バットとボール先）を条件ごとに均等化する
+counterbalance_order: true
 conditions:
   - condition_id: standard_nolimit
     variants: [linda/standard@1, bat_ball/standard@1]

@@ -20,12 +20,16 @@ def participant(pid: str = "p1", consent: str = "agreed") -> dict[str, object]:
         "participant_id": pid,
         "experiment_id": "pilot_v1",
         "condition_id": "standard_limit",
+        "order_index": 0,
+        "assignment_method": "balanced_cells",
         "assignment_seed": 42,
         "consent_status": consent,
         "consented_at": T0,
         "status": "in_progress",
         "created_at": T0,
         "completed_at": None,
+        "aborted_at": None,
+        "abort_reason": None,
         "app_version": "0.1.0",
         "config_hash": "x" * 64,
     }
@@ -47,6 +51,7 @@ def trial(pid: str = "p1", trial_id: str = "t1", submission_id: str = "s1") -> d
         "time_limit_sec": 15.0,
         "show_countdown": True,
         "attempt": "initial",
+        "initial_trial_id": None,
         "shown_at_server": T0,
         "submitted_at_server": T0,
         "shown_at_client_ms": None,
@@ -155,3 +160,47 @@ def test_status_update(repo: SqliteRepository) -> None:
     repo.set_participant_status("p1", "completed", T0)
     [row] = repo.read_table("participants")
     assert (row["status"], row["completed_at"]) == ("completed", T0)
+
+
+def test_assigned_counts_exclude_aborted_and_abandoned(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    r = SqliteRepository(tmp_path / "a.sqlite")
+    old = T0 - timedelta(hours=2)
+    r.create_participant(participant("done") | {"status": "completed", "created_at": old})
+    r.create_participant(participant("active"))
+    r.create_participant(participant("stale") | {"created_at": old})
+    r.create_participant(participant("gone") | {"status": "aborted"})
+    seen: list[dict[tuple[str, int], int]] = []
+
+    def build(counts: dict[tuple[str, int], int]) -> dict[str, object]:
+        seen.append(counts)
+        return participant("new")
+
+    r.create_participant_assigned("pilot_v1", T0 - timedelta(minutes=30), build)
+    assert seen == [{("standard_limit", 0): 2}]
+    assert r.get_participant("new") is not None
+
+
+def test_mark_aborted_only_in_progress(repo: SqliteRepository) -> None:
+    assert repo.mark_aborted("p1", T0, "reload")
+    assert not repo.mark_aborted("p1", T0, "reload")
+    row = repo.get_participant("p1")
+    assert row is not None and (row["status"], row["abort_reason"]) == ("aborted", "reload")
+
+
+def test_accepting_defaults_to_closed_and_follows_latest(repo: SqliteRepository) -> None:
+    from datetime import timedelta
+
+    assert not repo.is_accepting("pilot_v1")
+    for i, flag in enumerate([True, False, True]):
+        repo.append_status(
+            {
+                "log_id": f"l{i}",
+                "experiment_id": "pilot_v1",
+                "accepting": flag,
+                "changed_at": T0 + timedelta(minutes=i),
+            }
+        )
+    assert repo.is_accepting("pilot_v1")
+    assert not repo.is_accepting("other")

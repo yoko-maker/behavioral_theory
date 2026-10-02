@@ -13,7 +13,17 @@ import yaml
 from cogexp.domain.models import Experiment, TaskVariant, VariantRef
 
 REPO_EXPERIMENTS = Path(__file__).resolve().parents[3] / "experiments"
-TEXT_NAMES = ("intro", "consent", "instructions", "transition", "end", "declined")
+TEXT_NAMES = (
+    "intro",
+    "consent",
+    "instructions",
+    "transition",
+    "review_intro",
+    "end",
+    "declined",
+    "aborted",
+    "closed",
+)
 
 
 @dataclass(frozen=True)

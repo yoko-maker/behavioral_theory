@@ -5,8 +5,11 @@ import pytest
 
 from cogexp.analysis.summary import (
     answer_distribution,
+    cell_summary,
     condition_summary,
     participation_summary,
+    revision_crosstab,
+    revision_summary,
     to_csv_bytes,
     to_frame,
 )
@@ -14,6 +17,9 @@ from cogexp.analysis.summary import (
 
 def _trial(**kw: object) -> dict[str, object]:
     base: dict[str, object] = {
+        "trial_id": None,
+        "attempt": "initial",
+        "initial_trial_id": None,
         "condition_id": "c",
         "task_id": "linda",
         "variant_id": "standard",
@@ -65,3 +71,53 @@ def test_answer_distribution_numeric() -> None:
 
 def test_csv_has_bom() -> None:
     assert to_csv_bytes(pd.DataFrame({"a": ["あ"]})).startswith(b"\xef\xbb\xbf")
+
+
+def test_revised_rows_are_excluded_from_condition_summary() -> None:
+    trials = to_frame(
+        "trials",
+        [_trial(trial_id="a"), _trial(trial_id="b", attempt="revised", initial_trial_id="a")],
+    )
+    [row] = condition_summary(trials).to_dict("records")
+    assert row["試行数"] == 1
+
+
+def test_revision_summary_and_crosstab() -> None:
+    trials = to_frame(
+        "trials",
+        [
+            _trial(trial_id="a", choice_id="conjunction", is_correct=False),
+            _trial(trial_id="a2", attempt="revised", initial_trial_id="a"),
+            _trial(trial_id="b"),
+            _trial(trial_id="b2", attempt="revised", initial_trial_id="b"),
+            _trial(trial_id="c", outcome="timeout", choice_id=None, is_correct=None),
+            _trial(trial_id="c2", attempt="revised", initial_trial_id="c"),
+        ],
+    )
+    [row] = revision_summary(trials).to_dict("records")
+    assert (row["対の数"], row["変更数"]) == (3, 2)  # 誤→正、時間切れ→回答 が変更
+    table = revision_crosstab(trials)
+    assert table.loc["誤答", "正答"] == 1
+    assert table.loc["判定不能", "正答"] == 1
+
+
+def test_revision_summary_empty() -> None:
+    assert revision_summary(to_frame("trials", [_trial(trial_id="a")])).empty
+
+
+def test_cell_summary_counts_status() -> None:
+    p = pd.DataFrame(
+        {
+            "condition_id": ["x", "x", "y"],
+            "order_index": [0, 0, 1],
+            "status": ["completed", "aborted", "completed"],
+        }
+    )
+    rows = cell_summary(p).to_dict("records")
+    assert rows[0] == {
+        "condition_id": "x",
+        "order_index": 0,
+        "completed": 1,
+        "aborted": 1,
+        "in_progress": 0,
+    }

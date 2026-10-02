@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from cogexp.domain.assignment import assign_condition
 from cogexp.domain.clock import FakeClock
-from cogexp.domain.models import Experiment, Outcome, TaskVariant
+from cogexp.domain.models import Outcome, TaskVariant
 from cogexp.domain.scoring import parse_numeric, score
 from cogexp.domain.timing import Deadline
 
@@ -82,16 +81,3 @@ def test_deadline_without_limit() -> None:
     d = Deadline(started_ms=0, time_limit_sec=None)
     assert not d.expired(10**9)
     assert d.remaining_sec(10**9) is None
-
-
-def test_assignment_is_reproducible() -> None:
-    exp = Experiment.model_validate(
-        {
-            "experiment_id": "e",
-            "title": "e",
-            "conditions": [{"condition_id": f"c{i}", "variants": ["t/c@1"]} for i in range(4)],
-        }
-    )
-    picks = {assign_condition(exp, seed).condition_id for seed in range(200)}
-    assert picks == {"c0", "c1", "c2", "c3"}
-    assert all(assign_condition(exp, s) == assign_condition(exp, s) for s in range(50))

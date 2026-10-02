@@ -1,0 +1,12 @@
+# 動作確認用：時間切れ・見直しをブラウザで確認するための実験定義（研究データには使わない）
+# 参加者画面: /?exp=check_timeout_revision
+experiment_id: check_timeout_revision
+title: 動作確認用（時間切れ・見直し）
+practice: [practice/choice@1, practice/numeric@1]
+confidence_levels: 5
+conditions:
+  - condition_id: limit_with_review
+    time_limit_sec: 15
+    show_countdown: true
+    allow_revision: true
+    variants: [linda/standard@1, bat_ball/standard@1]

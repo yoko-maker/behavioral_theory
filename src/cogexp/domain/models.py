@@ -105,6 +105,8 @@ class Condition(_Frozen):
     time_limit_sec: float | None = Field(default=None, gt=0)
     show_countdown: bool = False
     collect_confidence: bool = True
+    # 全問回答後に本課題を再提示し、見直し後の回答を別行で保存する（制限時間なし）
+    allow_revision: bool = False
     variants: tuple[str, ...] = Field(min_length=1)
 
     def variant_refs(self) -> tuple[VariantRef, ...]:
@@ -123,6 +125,10 @@ class Experiment(_Frozen):
     practice: tuple[str, ...] = ()
     # 確信度の段階数（1 = まったく自信がない ～ confidence_levels = とても自信がある）
     confidence_levels: int = Field(default=5, ge=2, le=11)
+    # 本課題の提示順をラテン方格の回転で均等化する（条件 × 回転 のセルで割当人数をそろえる）
+    counterbalance_order: bool = False
+    # 開始からこの分数を過ぎた in_progress は放置とみなし、割当人数に数えない
+    abandon_after_min: int = Field(default=30, gt=0)
     conditions: tuple[Condition, ...] = Field(min_length=1)
 
     def practice_refs(self) -> tuple[VariantRef, ...]:

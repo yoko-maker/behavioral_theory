@@ -14,9 +14,19 @@ class PlannedItem:
     presentation_order: int  # 練習を含む通し番号（1始まり）
 
 
-def build_plan(experiment: Experiment, condition: Condition) -> tuple[PlannedItem, ...]:
+def rotate[T](items: tuple[T, ...], order_index: int) -> tuple[T, ...]:
+    """ラテン方格の回転。order_index = k なら k 番目の項目から始める。"""
+    if not items:
+        return items
+    k = order_index % len(items)
+    return items[k:] + items[:k]
+
+
+def build_plan(
+    experiment: Experiment, condition: Condition, order_index: int = 0
+) -> tuple[PlannedItem, ...]:
     refs = [(r, True) for r in experiment.practice_refs()]
-    refs += [(r, False) for r in condition.variant_refs()]
+    refs += [(r, False) for r in rotate(condition.variant_refs(), order_index)]
     return tuple(
         PlannedItem(ref=r, is_practice=p, presentation_order=i)
         for i, (r, p) in enumerate(refs, start=1)

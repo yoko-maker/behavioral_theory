@@ -1,6 +1,8 @@
 """実験者画面の基本集計（概要書 §9.1）と CSV 出力。
 
-練習試行は集計から除外する。正答率の分母は「判定可能な回答」（is_correct が空でないもの）。
+練習試行は集計から除外する。条件別・版別の集計は初回回答（attempt=initial）のみを対象にし、
+見直し後の回答は ``revision_summary`` で初回回答と対にして扱う。
+正答率の分母は「判定可能な回答」（is_correct が空でないもの）。
 時間切れは正答率の分母に含めず、時間切れ率として別に示す。
 """
 
@@ -25,12 +27,29 @@ def participation_summary(participants: pd.DataFrame) -> dict[str, int]:
     return {
         "参加（同意）": len(participants),
         "完了": int((status == "completed").sum()),
-        "未完了（中断を含む）": int((status != "completed").sum()),
+        "中断（再読み込み等）": int((status == "aborted").sum()),
+        "進行中・放置": int((status == "in_progress").sum()),
     }
 
 
+def cell_summary(participants: pd.DataFrame) -> pd.DataFrame:
+    """条件 × 出題順（セル）ごとの状態別人数。割当の偏りの確認用。"""
+    if participants.empty:
+        return pd.DataFrame(
+            columns=["condition_id", "order_index", "completed", "aborted", "in_progress"]
+        )
+    table = pd.crosstab(
+        [participants["condition_id"], participants["order_index"]], participants["status"]
+    )
+    for col in ("completed", "aborted", "in_progress"):
+        if col not in table.columns:
+            table[col] = 0
+    return table[["completed", "aborted", "in_progress"]].reset_index()
+
+
 def _main_trials(trials: pd.DataFrame) -> pd.DataFrame:
-    return trials[~trials["is_practice"].astype(bool)]
+    """本課題の初回回答のみ。"""
+    return trials[~trials["is_practice"].astype(bool) & (trials["attempt"] == "initial")]
 
 
 def _aggregate(trials: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
@@ -100,6 +119,67 @@ def answer_distribution(trials: pd.DataFrame) -> pd.DataFrame:
         .rename("件数")
         .reset_index()
     )
+
+
+def _answer_text(df: pd.DataFrame) -> pd.Series:
+    text = df["choice_id"].where(df["choice_id"].notna(), df["response_value"].astype(str))
+    return text.where(df["outcome"] == "answered", "（" + df["outcome"].astype(str) + "）")
+
+
+def revision_pairs(trials: pd.DataFrame) -> pd.DataFrame:
+    """見直し後の回答と初回回答の対（1行 = 1対）。"""
+    revised = trials[trials["attempt"] == "revised"]
+    initial = trials[trials["attempt"] == "initial"].set_index("trial_id")
+    if revised.empty:
+        return pd.DataFrame(
+            columns=[
+                "condition_id",
+                "task_id",
+                "variant_id",
+                "task_version",
+                "初回",
+                "見直し後",
+                "初回正誤",
+                "見直し後正誤",
+                "変更",
+            ]
+        )
+    first = initial.loc[revised["initial_trial_id"]]
+    out = pd.DataFrame(
+        {
+            "condition_id": revised["condition_id"].to_numpy(),
+            "task_id": revised["task_id"].to_numpy(),
+            "variant_id": revised["variant_id"].to_numpy(),
+            "task_version": revised["task_version"].to_numpy(),
+            "初回": _answer_text(first).to_numpy(),
+            "見直し後": _answer_text(revised).to_numpy(),
+            "初回正誤": first["is_correct"].to_numpy(),
+            "見直し後正誤": revised["is_correct"].to_numpy(),
+        }
+    )
+    out["変更"] = out["初回"] != out["見直し後"]
+    return out
+
+
+def revision_summary(trials: pd.DataFrame) -> pd.DataFrame:
+    """条件・版ごとの回答変化率（同一参加者内の初回 → 見直し後）。"""
+    pairs = revision_pairs(trials)
+    keys = ["condition_id", "task_id", "variant_id", "task_version"]
+    if pairs.empty:
+        return pd.DataFrame(columns=[*keys, "対の数", "変更数", "回答変化率"])
+    g = pairs.groupby(keys)
+    out = pd.DataFrame({"対の数": g.size(), "変更数": g["変更"].sum()})
+    out["回答変化率"] = out["変更数"] / out["対の数"]
+    return out.reset_index()
+
+
+def revision_crosstab(trials: pd.DataFrame) -> pd.DataFrame:
+    """初回正誤 × 見直し後正誤 のクロス集計（判定不能は「判定不能」）。"""
+    pairs = revision_pairs(trials)
+    label = {True: "正答", False: "誤答"}
+    before = pairs["初回正誤"].map(label).fillna("判定不能").rename("初回")
+    after = pairs["見直し後正誤"].map(label).fillna("判定不能").rename("見直し後")
+    return pd.crosstab(before, after)
 
 
 def to_csv_bytes(df: pd.DataFrame) -> bytes:

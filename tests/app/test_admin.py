@@ -43,5 +43,25 @@ def test_admin_requires_password(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_admin_disabled_without_password(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("COGEXP_ADMIN_PASSWORD", raising=False)
-    at = AppTest.from_function(_admin_page, default_timeout=30).run()
+    at = AppTest.from_function(_admin_page, default_timeout=30)
+    # 手元の .streamlit/secrets.toml に左右されないよう、空のパスワードを明示する
+    at.secrets["admin_password"] = ""
+    at.run()
     assert any("未設定" in w.value for w in at.warning)
+
+
+def test_toggle_accepting_is_logged(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from cogexp.storage.repository import SqliteRepository
+
+    monkeypatch.setenv("COGEXP_ADMIN_PASSWORD", "secret")
+    at = AppTest.from_function(_admin_page, default_timeout=30).run()
+    at.text_input[0].input("secret").run()
+    at.button[0].click().run()
+    [start] = [b for b in at.button if b.label == "受付を開始する"]
+    start.click().run()
+    repo = SqliteRepository(tmp_path / "data" / "cogexp.sqlite")
+    assert repo.is_accepting("test_exp")
+    [stop] = [b for b in at.button if b.label == "受付を停止する"]
+    stop.click().run()
+    assert not repo.is_accepting("test_exp")
+    assert len(repo.read_table("experiment_status_log")) == 2
