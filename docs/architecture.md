@@ -6,13 +6,16 @@
 app/ (Streamlit UI)
   │  画面描画・入力・session_state
   ▼
+cogexp.service（参加者セッションの進行：採点・時間切れ判定・保存行の組み立て）
+  │
+  ▼
 cogexp.config ──► cogexp.domain ◄── cogexp.storage ◄── cogexp.analysis
  YAML読込          純粋ロジック        保存スキーマ         集計・前処理
                    (pydantic のみ)     リポジトリ           (pandas)
 ```
 
 - 矢印は「import してよい方向」。`domain` はどこにも依存しない。
-- `app/` だけが `streamlit` を import できる。
+- `app/` だけが `streamlit` を import できる。参加者フローの app は `cogexp.service` を呼んで描画するだけにする。
 - 依存ルールは `scripts/checks/architecture.py` が強制する（`dev.py check` に含まれる）。
 
 | ルールID | 内容 |

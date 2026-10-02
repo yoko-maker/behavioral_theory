@@ -55,7 +55,7 @@ TABLES: dict[str, tuple[Column, ...]] = {
         Column("is_correct", "bool", nullable=True),
         Column("confidence", "int", nullable=True),
         Column("confidence_timing", "str", nullable=True),
-        Column("revision_count", "int"),
+        Column("revision_count", "int", nullable=True),
         Column("duplicate_submission_count", "int"),
     ),
     "events": (

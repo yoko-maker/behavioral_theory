@@ -110,15 +110,34 @@ class Condition(_Frozen):
     def variant_refs(self) -> tuple[VariantRef, ...]:
         return tuple(VariantRef.parse(v) for v in self.variants)
 
+    @model_validator(mode="after")
+    def _check_refs(self) -> Self:
+        self.variant_refs()
+        return self
+
 
 class Experiment(_Frozen):
     experiment_id: str = Field(pattern=_ID)
     title: str
+    # 練習課題。条件と同じ時間設定・確信度設定で、本課題の前に提示する
+    practice: tuple[str, ...] = ()
+    # 確信度の段階数（1 = まったく自信がない ～ confidence_levels = とても自信がある）
+    confidence_levels: int = Field(default=5, ge=2, le=11)
     conditions: tuple[Condition, ...] = Field(min_length=1)
+
+    def practice_refs(self) -> tuple[VariantRef, ...]:
+        return tuple(VariantRef.parse(v) for v in self.practice)
+
+    def condition(self, condition_id: str) -> Condition:
+        for c in self.conditions:
+            if c.condition_id == condition_id:
+                return c
+        raise KeyError(f"{self.experiment_id}: 条件 {condition_id} は存在しない")
 
     @model_validator(mode="after")
     def _unique_conditions(self) -> Self:
         ids = [c.condition_id for c in self.conditions]
         if len(set(ids)) != len(ids):
             raise ValueError(f"{self.experiment_id}: condition_id が重複している")
+        self.practice_refs()
         return self

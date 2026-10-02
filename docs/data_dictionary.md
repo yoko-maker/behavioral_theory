@@ -15,9 +15,9 @@
 | `experiment_id` | str | 不可 | 実験定義のID（`experiments/*.yaml`） |
 | `condition_id` | str | 不可 | 割り当てられた条件ID |
 | `assignment_seed` | int | 不可 | 条件割当・出題順・選択肢順の生成に使った乱数 seed |
-| `consent_status` | str | 不可 | `pending` / `agreed` / `declined` |
-| `consented_at` | datetime | 可 | 同意した時刻。未同意なら空 |
-| `status` | str | 不可 | `in_progress` / `completed` / `aborted` |
+| `consent_status` | str | 不可 | 常に `agreed`。参加者レコードは同意時にのみ作成し、同意前・不同意の参加者は保存しない（§12.1） |
+| `consented_at` | datetime | 可 | 同意した時刻 |
+| `status` | str | 不可 | `in_progress` / `completed`。終了画面に到達しなかった参加者は `in_progress` のまま残る（中断として扱う） |
 | `created_at` | datetime | 不可 | 参加者レコード作成時刻 |
 | `completed_at` | datetime | 可 | 終了画面に到達した時刻 |
 | `app_version` | str | 不可 | 実施時のアプリバージョン |
@@ -42,17 +42,17 @@
 | `show_countdown` | bool | 不可 | 残り時間を表示したか（制限の有無とは独立） |
 | `attempt` | str | 不可 | `initial`（初回回答）/ `revised`（再考後回答） |
 | `shown_at_server` | datetime | 不可 | サーバー側で問題を表示した時刻 |
-| `submitted_at_server` | datetime | 可 | サーバー側で回答を受信した時刻。時間切れ・中断は空 |
+| `submitted_at_server` | datetime | 可 | サーバー側で回答を受信した時刻。時間切れは空 |
 | `shown_at_client_ms` | float | 可 | ブラウザ側の表示時刻（相対ms）。取得できない場合は空 |
 | `submitted_at_client_ms` | float | 可 | ブラウザ側の回答確定時刻（相対ms） |
-| `response_time_ms` | float | 可 | 表示から回答確定までの時間。取得元（client優先）は分析時に明記する |
+| `response_time_ms` | float | 可 | 表示から回答確定までの時間。フェーズ1はサーバー側の単調時計で計測し、通信・再描画の遅延を含む。時間切れは空 |
 | `outcome` | str | 不可 | `answered` / `timeout` / `skipped` / `aborted`。時間切れ・未回答を誤答と区別する |
-| `choice_id` | str | 可 | 選択式の回答。数値入力式・未回答は空 |
-| `response_value` | float | 可 | 数値入力式の回答値 |
+| `choice_id` | str | 可 | 選択式の回答。数値入力式・時間切れは空（制限時間後の送信も回答として扱わない） |
+| `response_value` | float | 可 | 数値入力式の回答値（全角数字・桁区切り・「円」を正規化した値）。選択式・時間切れは空 |
 | `is_correct` | bool | 可 | 正誤。`outcome=answered` かつ正答定義がある版のみ設定し、それ以外は空 |
-| `confidence` | int | 可 | 確信度（段階評価）。取得しない条件では空 |
+| `confidence` | int | 可 | 確信度（1〜実験定義の `confidence_levels`）。取得しない条件・時間切れ・確信度画面で離脱した場合は空 |
 | `confidence_timing` | str | 可 | `before` / `after`。取得しない条件では空 |
-| `revision_count` | int | 不可 | 確定前に選択・入力を変更した回数 |
+| `revision_count` | int | 可 | 選択式で、確定前に選択を変更した回数（最初の選択は数えない）。数値入力式はフェーズ1では計測できないため空（Enter 送信のためフォーム化しており、途中の入力がサーバーに届かない） |
 | `duplicate_submission_count` | int | 不可 | 同一 `submission_id` で重複送信を検知した回数 |
 
 ## events

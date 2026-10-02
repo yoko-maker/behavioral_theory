@@ -1,0 +1,22 @@
+# 練習課題：操作方法の確認用。本課題と関係のない簡単な内容にする（概要書 §5）
+variants:
+  - task_id: practice
+    variant_id: choice
+    version: 1
+    response_format: choice
+    prompt: |
+      【練習】次のうち、果物はどれですか。
+    choices:
+      - id: apple
+        text: りんご
+      - id: desk
+        text: 机
+    correct_choice_id: apple
+
+  - task_id: practice
+    variant_id: numeric
+    version: 1
+    response_format: numeric
+    prompt: |
+      【練習】3 + 4 はいくつですか。数字で入力してください。
+    correct_value: 7

@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from typing import Final
 
-PARTICIPANT_ID: Final = "participant_id"
-FLOW_STATE: Final = "flow_state"
-CURRENT_TRIAL: Final = "current_trial"
+# 参加者セッション（cogexp.service.ParticipantSession）
+SESSION: Final = "participant_session"
+# テスト用：FakeClock を注入するためのキー（本番では設定しない）
+TEST_CLOCK: Final = "_test_clock"
+# 実験者画面の認証済みフラグ
+ADMIN_AUTHED: Final = "admin_authed"
+# 数値入力の解釈エラー表示
+INPUT_ERROR: Final = "input_error"

@@ -2,5 +2,7 @@
   "bat_ball/explicit@1": "807fcc8cee14f71d517dbab6b2bfede91fa2ffc2cad573863f03e938d62796a7",
   "bat_ball/standard@1": "6938b5101606a7bb6cc70dcec8cc177850a266fec822d7bce39d3118d336c557",
   "linda/frequency@1": "e7e50c83d675f70717485fa2ee314d121939604f3e69da10f2cdcdc18f90837c",
-  "linda/standard@1": "01b360e8c25d84e3663de6d9f39e1942e2dac03c7960e044cef2e37db13432b5"
+  "linda/standard@1": "01b360e8c25d84e3663de6d9f39e1942e2dac03c7960e044cef2e37db13432b5",
+  "practice/choice@1": "0345decf8eb1725c20c4bdb2020b3515c6c131620d8137cbd605773de46a9ddf",
+  "practice/numeric@1": "78d04326dc0670ed9bf57f664c0ebafe3f9467b0d0a71d1ef3dc17c7b572d9bc"
 }

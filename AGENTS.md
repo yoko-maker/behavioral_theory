@@ -16,7 +16,8 @@ Streamlit で実装する認知課題（リンダ問題・バットとボール�
 | --- | --- |
 | `app/` | Streamlit UI 層（画面・セッション状態のみ）。→ `app/AGENTS.md` |
 | `src/cogexp/domain/` | 純粋ロジック（モデル・採点・出題制御・時計）。→ `src/cogexp/domain/AGENTS.md` |
-| `src/cogexp/config/` | `experiments/` の YAML を読み込み domain モデルへ変換 |
+| `src/cogexp/service.py` | 参加者セッションの進行（app から呼ぶ唯一の入口） |
+| `src/cogexp/config/` | `experiments/` の YAML と参加者向け文面（`experiments/texts/`）の読み込み |
 | `src/cogexp/storage/` | 保存層（スキーマ・リポジトリ）。→ `src/cogexp/storage/AGENTS.md` |
 | `src/cogexp/analysis/` | 集計・前処理（pandas）。UI 非依存 |
 | `experiments/` | 問題文・条件設定（版管理対象）。→ `experiments/AGENTS.md` |
