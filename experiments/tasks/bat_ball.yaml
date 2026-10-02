@@ -1,0 +1,27 @@
+# バットとボール問題（Frederick, 2005 を基にした日本語草案）
+# 公開後は既存エントリを書き換えず、version を上げて追加すること（experiments/AGENTS.md）
+variants:
+  - task_id: bat_ball
+    variant_id: standard
+    version: 1
+    response_format: numeric
+    prompt: |
+      バットとボールは合わせて1,100円です。
+      バットはボールより1,000円高いです。
+      ボールはいくらですか。
+    unit: 円
+    correct_value: 50
+    tolerance: 0
+
+  - task_id: bat_ball
+    variant_id: explicit
+    version: 1
+    response_format: numeric
+    prompt: |
+      バットとボールの値段について、次の2つの条件が成り立ちます。
+      条件1：バットの値段 + ボールの値段 = 1,100円
+      条件2：バットの値段 − ボールの値段 = 1,000円
+      ボールはいくらですか。
+    unit: 円
+    correct_value: 50
+    tolerance: 0

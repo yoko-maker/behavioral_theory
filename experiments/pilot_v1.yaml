@@ -1,0 +1,19 @@
+# 予備実験 v1：表現（標準／言い換え）× 時間制限（なし／あり）
+experiment_id: pilot_v1
+title: 予備実験 v1
+conditions:
+  - condition_id: standard_nolimit
+    variants: [linda/standard@1, bat_ball/standard@1]
+
+  - condition_id: standard_limit
+    time_limit_sec: 15 # 2026-10-02 決定。予備実験の読解時間で妥当性を確認する
+    show_countdown: true
+    variants: [linda/standard@1, bat_ball/standard@1]
+
+  - condition_id: reworded_nolimit
+    variants: [linda/frequency@1, bat_ball/explicit@1]
+
+  - condition_id: reworded_limit
+    time_limit_sec: 15 # 2026-10-02 決定。予備実験の読解時間で妥当性を確認する
+    show_countdown: true
+    variants: [linda/frequency@1, bat_ball/explicit@1]

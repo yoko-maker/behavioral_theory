@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+dist/
+
+# 実験データ（参加者データはリポジトリに含めない）
+data/
+*.sqlite
+*.sqlite3
+exports/
+
+# Streamlit secrets（実験者パスワード等）
+.streamlit/secrets.toml
+
+# 非公開資料（概要書はローカルのみで管理し、リポジトリに含めない）
+*概要書*.md
+private/
+
+# OS / エディタ
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Claude Code のローカル設定（個人用）
+.claude/settings.local.json

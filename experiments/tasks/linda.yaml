@@ -1,0 +1,34 @@
+# リンダ問題（Tversky & Kahneman, 1983 を基にした日本語草案）
+# 公開後は既存エントリを書き換えず、version を上げて追加すること（experiments/AGENTS.md）
+variants:
+  - task_id: linda
+    variant_id: standard
+    version: 1
+    response_format: choice
+    prompt: |
+      リンダは31歳の独身女性で、率直に意見を言い、とても聡明です。
+      大学では哲学を専攻していました。学生時代には差別や社会正義の問題に強い関心を持ち、
+      反核運動のデモにも参加していました。
+      次のうち、どちらの可能性が高いと思いますか。
+    choices:
+      - id: single
+        text: リンダは銀行員である。
+      - id: conjunction
+        text: リンダは銀行員で、フェミニスト運動に参加している。
+    correct_choice_id: single
+
+  - task_id: linda
+    variant_id: frequency
+    version: 1
+    response_format: choice
+    prompt: |
+      次の説明に当てはまる人が100人いるとします。
+      「31歳の独身女性で、率直に意見を言い、とても聡明。大学では哲学を専攻し、
+      学生時代には差別や社会正義の問題に強い関心を持ち、反核運動のデモにも参加していた。」
+      この100人のうち、次のどちらに当てはまる人の方が多いと思いますか。
+    choices:
+      - id: single
+        text: 銀行員である人
+      - id: conjunction
+        text: 銀行員で、フェミニスト運動に参加している人
+    correct_choice_id: single
