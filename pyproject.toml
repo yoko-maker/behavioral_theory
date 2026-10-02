@@ -4,8 +4,9 @@ version = "0.1.0"
 description = "認知・判断・行動分析アプリ（Streamlit）"
 requires-python = ">=3.12"
 dependencies = [
-    "streamlit>=1.50",
+    "streamlit>=1.64",  # components v2（問題画面の部品）を使用
     "pandas>=2.2",
+    "numpy>=2.0",
     "pydantic>=2.9",
     "pyyaml>=6.0",
     "plotly>=5.24",

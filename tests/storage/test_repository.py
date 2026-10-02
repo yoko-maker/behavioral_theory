@@ -63,8 +63,22 @@ def trial(pid: str = "p1", trial_id: str = "t1", submission_id: str = "s1") -> d
         "is_correct": True,
         "confidence": None,
         "confidence_timing": None,
+        "confidence_rt_client_ms": None,
+        "confidence_revision_count": None,
+        "confidence_client_log_status": None,
+        "confidence_n_events": None,
         "revision_count": 0,
         "duplicate_submission_count": 0,
+        "client_log_status": "ok",
+        "n_events": 0,
+        "browser_family": "chrome",
+        "os_family": "windows",
+        "pointer_types": "mouse",
+        "viewport_w": 1280,
+        "viewport_h": 720,
+        "panel_w": 700,
+        "panel_h": 400,
+        "device_pixel_ratio": 1.0,
     }
 
 
@@ -109,7 +123,8 @@ def test_events_require_consent(repo: SqliteRepository) -> None:
         "event_id": "e1",
         "trial_id": "t1",
         "participant_id": "nobody",
-        "event_type": "click",
+        "phase": "answer",
+        "event_type": "pointerdown",
         "t_client_ms": 1.0,
         "x_norm": 0.5,
         "y_norm": 0.5,
@@ -204,3 +219,54 @@ def test_accepting_defaults_to_closed_and_follows_latest(repo: SqliteRepository)
         )
     assert repo.is_accepting("pilot_v1")
     assert not repo.is_accepting("other")
+
+
+def _event(i: int, trial_id: str = "t1") -> dict[str, object]:
+    return {
+        "event_id": f"e{i}",
+        "trial_id": trial_id,
+        "participant_id": "p1",
+        "phase": "answer",
+        "event_type": "move",
+        "t_client_ms": float(i),
+        "x_norm": 0.5,
+        "y_norm": 0.5,
+        "target_id": None,
+        "payload": None,
+    }
+
+
+def test_trial_and_events_saved_together(repo: SqliteRepository) -> None:
+    assert repo.save_trial(trial(), [_event(1), _event(2)]) is SaveResult.INSERTED
+    assert len(repo.read_table("events")) == 2
+    # 重複送信ではイベントも増えない
+    assert repo.save_trial(trial(), [_event(3)]) is SaveResult.DUPLICATE
+    assert len(repo.read_table("events")) == 2
+
+
+def test_event_failure_rolls_back_trial(repo: SqliteRepository) -> None:
+    bad = _event(1) | {"event_type": None}
+    with pytest.raises(SchemaMismatchError):
+        repo.save_trial(trial(), [bad])
+    assert repo.read_table("trials") == []
+    assert repo.read_table("events") == []
+
+
+def test_confidence_with_events_saved_once(repo: SqliteRepository) -> None:
+    repo.save_trial(trial())
+    conf_events = [_event(10) | {"phase": "confidence"}, _event(11) | {"phase": "confidence"}]
+    assert repo.set_confidence(
+        "t1",
+        3,
+        "after",
+        rt_client_ms=1800.0,
+        revision_count=1,
+        log_status="ok",
+        events=conf_events,
+    )
+    # 2回目は確信度もイベントも保存しない
+    assert not repo.set_confidence("t1", 5, "after", log_status="ok", events=[_event(12)])
+    [row] = repo.read_table("trials")
+    assert (row["confidence"], row["confidence_rt_client_ms"]) == (3, 1800.0)
+    assert (row["confidence_revision_count"], row["confidence_n_events"]) == (1, 2)
+    assert {e["phase"] for e in repo.read_table("events")} == {"confidence"}

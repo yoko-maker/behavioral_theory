@@ -12,20 +12,34 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from enum import StrEnum
 from importlib.metadata import PackageNotFoundError, version
 
 from cogexp.config.loader import Catalog
 from cogexp.domain.assignment import ASSIGNMENT_METHOD, Cell, choose_cell, new_seed
+from cogexp.domain.client_log import ClientEvent, ClientSubmission, parse_submission
 from cogexp.domain.clock import Clock
 from cogexp.domain.flow import Event, FlowState, Stage, advance
 from cogexp.domain.models import Condition, Experiment, Outcome, ResponseFormat, TaskVariant
 from cogexp.domain.plan import PlannedItem, build_plan
-from cogexp.domain.scoring import score
+from cogexp.domain.scoring import parse_numeric, score
 from cogexp.domain.timing import Deadline
 from cogexp.storage.repository import CellCounts, ParticipantAbortedError, SqliteRepository
 
 CONFIDENCE_TIMING = "after"  # 回答後のみ
 ABORT_REASON_RELOAD = "reload"
+# 期限後、ブラウザからの時間切れ通知（操作ログ付き）を待つ猶予。過ぎたらログなしで時間切れにする
+CLIENT_GRACE_MS = 2_000
+# 確信度の画面の部品に渡す画面ID（評価対象の trial_id + この接尾辞）
+CONFIDENCE_SCREEN_SUFFIX = "-conf"
+
+
+class ClientResult(StrEnum):
+    ACCEPTED = "accepted"  # 回答として記録した
+    TIMEOUT = "timeout"  # 時間切れとして記録した
+    INVALID = "invalid"  # 入力を受け付けなかった（画面にエラーを表示して再送を待つ）
+    WAITING = "waiting"  # ブラウザの時間切れ通知がサーバーの期限より早かった（期限を待つ）
+    IGNORED = "ignored"  # 古い画面・想定外の段階からの送信
 
 
 def app_version() -> str:
@@ -45,7 +59,11 @@ class ActiveItem:
     submission_id: str
     shown_at: datetime
     deadline: Deadline
-    changes: int = 0  # 回答欄の変更回数（最初の入力を含む）
+    # ブラウザから届いたイベント（送信が複数回に分かれた場合も含めて蓄積する）
+    pending_events: list[ClientEvent] = field(default_factory=list)
+    client: ClientSubmission | None = None  # 最後に届いた送信（端末情報・表示時刻など）
+    error: str | None = None  # 画面に表示する入力エラー
+    error_seq: int = 0  # エラーを出すたびに増やす（ブラウザが再送を許可する合図）
 
 
 @dataclass(frozen=True)
@@ -70,6 +88,10 @@ class ParticipantSession:
     active: ActiveItem | None = None
     last_trial_id: str | None = None
     initial_answers: dict[int, InitialAnswer] = field(default_factory=dict)
+    # 確信度の画面で、受け付けなかった送信のイベント（再送時に合わせて保存する）
+    confidence_pending: list[ClientEvent] = field(default_factory=list)
+    confidence_error: str | None = None
+    confidence_error_seq: int = 0
 
 
 class ParticipantService:
@@ -215,12 +237,73 @@ class ParticipantService:
     def is_expired(self, s: ParticipantSession) -> bool:
         return self.ensure_shown(s).deadline.expired(self.clock.monotonic_ms())
 
-    def note_change(self, s: ParticipantSession) -> None:
-        if s.flow.stage in (Stage.TRIAL, Stage.REVIEW) and s.active is not None:
-            s.active.changes += 1
+    def timeout_due(self, s: ParticipantSession) -> bool:
+        """サーバー側で時間切れを確定すべきか。
+
+        期限を過ぎていても、ブラウザから何も届いていなければ CLIENT_GRACE_MS だけ待つ
+        （ブラウザの時間切れ通知に操作ログが含まれるため）。
+        """
+        active = self.ensure_shown(s)
+        now_ms = self.clock.monotonic_ms()
+        limit = active.deadline.time_limit_sec
+        if limit is None or not active.deadline.expired(now_ms):
+            return False
+        waited = active.deadline.elapsed_ms(now_ms) - limit * 1000.0
+        return active.client is not None or waited >= CLIENT_GRACE_MS
+
+    def handle_client(self, s: ParticipantSession, raw: object) -> ClientResult:
+        """問題画面の部品から届いた送信値（未検証）を処理する。"""
+        if s.flow.stage not in (Stage.TRIAL, Stage.REVIEW) or s.active is None:
+            return ClientResult.IGNORED
+        client = parse_submission(raw)
+        if client is None:
+            return self._reject(s, "送信に失敗しました。もう一度「回答する」を押してください。")
+        if client.trial_id != s.active.trial_id:
+            return ClientResult.IGNORED
+        if client.kind == "timeout":
+            if self.client_timeout(s, client) is Outcome.TIMEOUT:
+                return ClientResult.TIMEOUT
+            return ClientResult.WAITING
+        _, variant = self.current(s)
+        choice_id: str | None = None
+        value: float | None = None
+        if variant.response_format is ResponseFormat.CHOICE:
+            choice_id = client.choice_id
+            if choice_id not in {c.id for c in variant.choices}:
+                self.receive_client(s, client)
+                return self._reject(s, "選択肢を選んでください。")
+        else:
+            value = parse_numeric(client.raw_value or "")
+            if value is None and not self.is_expired(s):
+                self.receive_client(s, client)
+                return self._reject(s, "数字で入力してください。")
+        outcome = self.submit(s, choice_id, value, client)
+        if outcome is Outcome.ANSWERED:
+            return ClientResult.ACCEPTED
+        if outcome is Outcome.TIMEOUT:
+            return ClientResult.TIMEOUT
+        return ClientResult.IGNORED
+
+    def _reject(self, s: ParticipantSession, message: str) -> ClientResult:
+        if s.active is not None:
+            s.active.error = message
+            s.active.error_seq += 1
+        return ClientResult.INVALID
+
+    def receive_client(self, s: ParticipantSession, client: ClientSubmission) -> bool:
+        """ブラウザからのイベントを表示中の試行に蓄積する。別の試行宛て（古い画面）なら捨てる。"""
+        if s.active is None or client.trial_id != s.active.trial_id:
+            return False
+        s.active.pending_events.extend(client.events)
+        s.active.client = client
+        return True
 
     def submit(
-        self, s: ParticipantSession, choice_id: str | None = None, value: float | None = None
+        self,
+        s: ParticipantSession,
+        choice_id: str | None = None,
+        value: float | None = None,
+        client: ClientSubmission | None = None,
     ) -> Outcome | None:
         """回答を確定する。制限時間を過ぎていた場合は時間切れとして記録する。"""
         stage = s.flow.stage
@@ -228,10 +311,21 @@ class ParticipantService:
             return None
         if (s.active.stage, s.active.item_index) != (stage, s.flow.current_item_index):
             return None
+        if client is not None and not self.receive_client(s, client):
+            return None
         if self.is_expired(s):
             return self.timeout(s)
         self._finish(s, Outcome.ANSWERED, choice_id, value)
         return Outcome.ANSWERED
+
+    def client_timeout(self, s: ParticipantSession, client: ClientSubmission) -> Outcome | None:
+        """ブラウザ側で制限時間に達した通知。判定はサーバーの期限で行う（docs/plans/phase3.md）。
+
+        サーバーの期限前なら、イベントだけ保持してサーバー側の時間切れ処理を待つ。
+        """
+        if s.flow.stage is not Stage.TRIAL or not self.receive_client(s, client):
+            return None
+        return self.timeout(s) if self.is_expired(s) else None
 
     def timeout(self, s: ParticipantSession) -> Outcome | None:
         if s.flow.stage is not Stage.TRIAL:
@@ -245,8 +339,6 @@ class ParticipantService:
     ) -> None:
         active = self.ensure_shown(s)
         item, variant = self.current(s)
-        cond = self._cond(s)
-        reviewing = s.flow.reviewing
         answered = outcome is Outcome.ANSWERED
         if variant.response_format is ResponseFormat.CHOICE:
             value = None
@@ -255,23 +347,14 @@ class ParticipantService:
         if not answered:
             choice_id, value = None, None
         is_correct = score(variant, outcome, choice_id, value)
+        reviewing = s.flow.reviewing
         initial = s.initial_answers.get(active.item_index) if reviewing else None
-        prefilled = initial is not None and initial.outcome is Outcome.ANSWERED
-        now_ms = self.clock.monotonic_ms()
         try:
-            self._save_trial(
-                s,
-                active,
-                item,
-                variant,
-                cond,
-                outcome,
-                choice_id,
-                value,
-                is_correct,
-                initial,
-                prefilled,
-                now_ms,
+            self.repo.save_trial(
+                self._trial_row(
+                    s, active, item, variant, outcome, choice_id, value, is_correct, initial
+                ),
+                self._event_rows(s, active.trial_id, active.pending_events, "answer"),
             )
         except ParticipantAbortedError:
             # 別タブ・再読み込みで中断済み。このタブも中断画面に切り替え、以後は保存しない
@@ -285,73 +368,144 @@ class ParticipantService:
         s.flow = advance(s.flow, Event.ANSWER if answered else Event.TIMEOUT)
         self._complete_if_end(s)
 
-    def _save_trial(
+    def _event_rows(
+        self, s: ParticipantSession, trial_id: str, events: list[ClientEvent], phase: str
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "event_id": uuid.uuid4().hex,
+                "trial_id": trial_id,
+                "participant_id": s.participant_id,
+                "phase": phase,
+                "event_type": e.type,
+                "t_client_ms": e.t,
+                "x_norm": e.x,
+                "y_norm": e.y,
+                "target_id": e.target,
+                "payload": e.payload,
+            }
+            for e in sorted(events, key=lambda e: e.t)
+        ]
+
+    def _trial_row(
         self,
         s: ParticipantSession,
         active: ActiveItem,
         item: PlannedItem,
         variant: TaskVariant,
-        cond: Condition,
         outcome: Outcome,
         choice_id: str | None,
         value: float | None,
         is_correct: bool | None,
         initial: InitialAnswer | None,
-        prefilled: bool,
-        now_ms: float,
-    ) -> None:
+    ) -> dict[str, object]:
+        cond = self._cond(s)
         reviewing = s.flow.reviewing
         answered = outcome is Outcome.ANSWERED
-        self.repo.save_trial(
-            {
-                "trial_id": active.trial_id,
-                "submission_id": active.submission_id,
-                "participant_id": s.participant_id,
-                "experiment_id": s.experiment_id,
-                "condition_id": cond.condition_id,
-                "task_id": item.ref.task_id,
-                "variant_id": item.ref.variant_id,
-                "task_version": item.ref.version,
-                "presentation_order": item.presentation_order,
-                "is_practice": item.is_practice,
-                "response_format": variant.response_format.value,
-                "time_limit_sec": active.deadline.time_limit_sec,
-                "show_countdown": cond.show_countdown and not reviewing,
-                "attempt": "revised" if reviewing else "initial",
-                "initial_trial_id": initial.trial_id if initial else None,
-                "shown_at_server": active.shown_at,
-                "submitted_at_server": self.clock.now() if answered else None,
-                "shown_at_client_ms": None,
-                "submitted_at_client_ms": None,
-                "response_time_ms": active.deadline.elapsed_ms(now_ms) if answered else None,
-                "outcome": outcome.value,
-                "choice_id": choice_id,
-                "response_value": value,
-                "is_correct": is_correct,
-                "confidence": None,
-                "confidence_timing": None,
-                # 数値入力式はフォーム送信のため途中の変更を観測できない（空にする）
-                # 見直しで初回回答が既定値として選択済みの場合は、最初の変更から数える
-                "revision_count": (
-                    max(0, active.changes - (0 if prefilled else 1))
-                    if variant.response_format is ResponseFormat.CHOICE
-                    else None
-                ),
-                "duplicate_submission_count": 0,
-            }
-        )
+        client = active.client
+        info = client.client if client else None
+        return {
+            "trial_id": active.trial_id,
+            "submission_id": active.submission_id,
+            "participant_id": s.participant_id,
+            "experiment_id": s.experiment_id,
+            "condition_id": cond.condition_id,
+            "task_id": item.ref.task_id,
+            "variant_id": item.ref.variant_id,
+            "task_version": item.ref.version,
+            "presentation_order": item.presentation_order,
+            "is_practice": item.is_practice,
+            "response_format": variant.response_format.value,
+            "time_limit_sec": active.deadline.time_limit_sec,
+            "show_countdown": cond.show_countdown and not reviewing,
+            "attempt": "revised" if reviewing else "initial",
+            "initial_trial_id": initial.trial_id if initial else None,
+            "shown_at_server": active.shown_at,
+            "submitted_at_server": self.clock.now() if answered else None,
+            "shown_at_client_ms": client.shown_ms if client else None,
+            "submitted_at_client_ms": client.sent_ms if client and answered else None,
+            "response_time_ms": (
+                active.deadline.elapsed_ms(self.clock.monotonic_ms()) if answered else None
+            ),
+            "outcome": outcome.value,
+            "choice_id": choice_id,
+            "response_value": value,
+            "is_correct": is_correct,
+            "confidence": None,
+            "confidence_timing": None,
+            # 確信度の画面の記録は rate() で後から設定する
+            "confidence_rt_client_ms": None,
+            "confidence_revision_count": None,
+            "confidence_client_log_status": None,
+            "confidence_n_events": None,
+            # ブラウザで数えた変更回数（定義は docs/data_dictionary.md）。届かなければ空
+            "revision_count": client.revision_count if client else None,
+            "duplicate_submission_count": 0,
+            "client_log_status": "ok" if client else "missing",
+            "n_events": len(active.pending_events),
+            "browser_family": info.browser if info else None,
+            "os_family": info.os if info else None,
+            "pointer_types": ",".join(info.pointer_types) if info else None,
+            "viewport_w": info.viewport_w if info else None,
+            "viewport_h": info.viewport_h if info else None,
+            "panel_w": info.panel_w if info else None,
+            "panel_h": info.panel_h if info else None,
+            "device_pixel_ratio": info.dpr if info else None,
+        }
 
-    def rate(self, s: ParticipantSession, confidence: int) -> bool:
+    def confidence_screen_id(self, s: ParticipantSession) -> str:
+        if s.last_trial_id is None:
+            raise RuntimeError("確信度の対象の試行がない")
+        return f"{s.last_trial_id}{CONFIDENCE_SCREEN_SUFFIX}"
+
+    def handle_confidence(self, s: ParticipantSession, raw: object) -> ClientResult:
+        """確信度の画面の部品から届いた送信値（未検証）を処理する。"""
+        if s.flow.stage is not Stage.CONFIDENCE or s.last_trial_id is None:
+            return ClientResult.IGNORED
+        client = parse_submission(raw)
+        if client is None:
+            return self._reject_confidence(
+                s, "送信に失敗しました。もう一度「次へ」を押してください。"
+            )
+        if client.trial_id != self.confidence_screen_id(s) or client.kind != "submit":
+            return ClientResult.IGNORED
+        levels = self.experiment(s).confidence_levels
+        raw_level = client.choice_id or ""
+        level = int(raw_level) if raw_level.isdigit() else 0
+        if not 1 <= level <= levels:
+            s.confidence_pending.extend(client.events)
+            return self._reject_confidence(s, "いずれかを選んでください。")
+        return ClientResult.ACCEPTED if self.rate(s, level, client) else ClientResult.IGNORED
+
+    def _reject_confidence(self, s: ParticipantSession, message: str) -> ClientResult:
+        s.confidence_error = message
+        s.confidence_error_seq += 1
+        return ClientResult.INVALID
+
+    def rate(
+        self, s: ParticipantSession, confidence: int, client: ClientSubmission | None = None
+    ) -> bool:
+        """確信度を記録する。client はブラウザからの送信（操作ログ・回答時間）。"""
         if s.flow.stage is not Stage.CONFIDENCE or s.last_trial_id is None:
             return False
         levels = self.experiment(s).confidence_levels
         if not 1 <= confidence <= levels:
             raise ValueError(f"確信度は 1..{levels}")
+        events = [*s.confidence_pending, *(client.events if client else ())]
         try:
-            self.repo.set_confidence(s.last_trial_id, confidence, CONFIDENCE_TIMING)
+            self.repo.set_confidence(
+                s.last_trial_id,
+                confidence,
+                CONFIDENCE_TIMING,
+                rt_client_ms=client.sent_ms - client.shown_ms if client else None,
+                revision_count=client.revision_count if client else None,
+                log_status="ok" if client else "missing",
+                events=self._event_rows(s, s.last_trial_id, events, "confidence"),
+            )
         except ParticipantAbortedError:
             s.flow = FlowState(stage=Stage.ABORTED)
             return False
+        s.confidence_pending, s.confidence_error = [], None
         s.flow = advance(s.flow, Event.RATE)
         self._complete_if_end(s)
         return True

@@ -10,5 +10,3 @@ SESSION: Final = "participant_session"
 TEST_CLOCK: Final = "_test_clock"
 # 実験者画面の認証済みフラグ
 ADMIN_AUTHED: Final = "admin_authed"
-# 数値入力の解釈エラー表示
-INPUT_ERROR: Final = "input_error"

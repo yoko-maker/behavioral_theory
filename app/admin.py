@@ -8,6 +8,7 @@ from __future__ import annotations
 import hmac
 import json
 
+import charts
 import pandas as pd
 import resources
 import state
@@ -23,6 +24,15 @@ from cogexp.analysis.summary import (
     to_csv_bytes,
     to_frame,
     variant_summary,
+)
+from cogexp.analysis.trajectory import (
+    choice_metrics,
+    confidence_metrics,
+    layout_of,
+    log_quality,
+    moves_of,
+    numeric_metrics,
+    phase_events,
 )
 from cogexp.config.loader import Catalog
 from cogexp.domain.assignment import cells
@@ -81,6 +91,140 @@ def _revision_tab(trials: pd.DataFrame) -> None:
     st.dataframe(revision_summary(trials), hide_index=True)
     st.subheader("初回 × 見直し後（正誤）")
     st.dataframe(revision_crosstab(trials))
+
+
+def _trial_label(t: pd.Series) -> str:
+    attempt = "見直し" if t["attempt"] == "revised" else "初回"
+    return (
+        f"{str(t['participant_id'])[:6]} / {t['presentation_order']}. "
+        f"{t['task_id']}/{t['variant_id']} / {attempt} / {t['outcome']}"
+    )
+
+
+def _answer_label(t: pd.Series) -> str:
+    if t["outcome"] != "answered":
+        return f"（{t['outcome']}）"
+    if pd.notna(t["choice_id"]):
+        return str(t["choice_id"])
+    return f"{t['response_value']:g}"
+
+
+def _aspect(t: pd.Series) -> float:
+    w, h = t["panel_w"], t["panel_h"]
+    return float(h) / float(w) if pd.notna(w) and pd.notna(h) and w else 0.6
+
+
+def _log_tab(trials: pd.DataFrame, events: pd.DataFrame) -> None:
+    st.caption(
+        "マウス軌跡は視線や思考を直接表すものではない（概要書 §6.4）。"
+        "指標の定義は docs/plans/phase3.md。"
+    )
+    st.subheader("ログ取得状況")
+    st.dataframe(log_quality(trials), hide_index=True)
+
+    ok = trials[trials["client_log_status"] == "ok"].sort_values("shown_at_server")
+    if ok.empty:
+        st.info("操作ログのある試行はまだありません。")
+        return
+
+    keys = [
+        "trial_id",
+        "participant_id",
+        "condition_id",
+        "presentation_order",
+        "task_id",
+        "variant_id",
+        "attempt",
+        "outcome",
+        "choice_id",
+        "response_value",
+        "pointer_types",
+    ]
+
+    st.subheader("選択式：マウス軌跡の指標")
+    choice_table = ok[keys].merge(choice_metrics(ok, events), on="trial_id")
+    choice_table["participant_id"] = choice_table["participant_id"].str[:6]
+    st.dataframe(choice_table.drop(columns=["trial_id", "response_value"]), hide_index=True)
+
+    st.subheader("数値入力式：キー操作の時間の指標")
+    st.caption(
+        "数値入力式ではカーソルは入力欄に向かうだけなので、軌跡ではなくキー操作の時間を見る。"
+    )
+    numeric_table = ok[keys].merge(numeric_metrics(ok, events), on="trial_id")
+    numeric_table["participant_id"] = numeric_table["participant_id"].str[:6]
+    st.dataframe(numeric_table.drop(columns=["trial_id", "choice_id"]), hide_index=True)
+
+    st.subheader("確信度の画面の指標")
+    st.caption(
+        "確信度を決めるまでの時間・選び直し・他の段階への出入りは迷いと関係しうる手がかりで、"
+        "迷いそのものではない。"
+    )
+    conf_table = ok[keys].merge(confidence_metrics(ok, events), on="trial_id")
+    conf_table["participant_id"] = conf_table["participant_id"].str[:6]
+    st.dataframe(conf_table.drop(columns=["trial_id", "pointer_types"]), hide_index=True)
+
+    # 以降の軌跡の図は回答の画面・選択式のみ
+    events = phase_events(events, "answer")
+    ok = ok[ok["response_format"] == "choice"]
+    if ok.empty:
+        st.info("操作ログのある選択式の試行はまだありません。")
+        return
+
+    st.subheader("軌跡（選択式・1試行）")
+    labels = {r["trial_id"]: _trial_label(r) for _, r in ok.iterrows()}
+    trial_id = st.selectbox("試行", list(labels), format_func=labels.__getitem__, key="log_trial")
+    t = ok[ok["trial_id"] == trial_id].iloc[0]
+    trial_events = events[events["trial_id"] == trial_id]
+    moves = moves_of(events, trial_id)
+    clicks = trial_events[trial_events["event_type"] == "pointerdown"].dropna(
+        subset=["x_norm", "y_norm"]
+    )
+    shown = float(t["shown_at_client_ms"])
+    end = float(trial_events["t_client_ms"].max()) - shown if len(trial_events) else 0.0
+    upto = st.slider(
+        "表示開始からの時間（ms）までを表示（動かすと再生）",
+        0,
+        max(int(end), 1),
+        max(int(end), 1),
+        step=100,
+        key=f"log_upto_{trial_id}",
+    )
+    st.plotly_chart(
+        charts.trajectory_figure(
+            moves, clicks, layout_of(events, trial_id), shown, upto, _aspect(t)
+        ),
+        width="stretch",
+        theme=None,  # 検証済みの配色を Streamlit のテーマで上書きさせない
+    )
+
+    st.subheader("軌跡の重ね合わせ（回答別）")
+    tasks = sorted({(r["task_id"], r["variant_id"], r["attempt"]) for _, r in ok.iterrows()})
+    task = st.selectbox(
+        "問題・版",
+        tasks,
+        format_func=lambda k: f"{k[0]}/{k[1]}（{'見直し' if k[2] == 'revised' else '初回'}）",
+        key="log_overlay_task",
+    )
+    subset = ok[
+        (ok["task_id"] == task[0]) & (ok["variant_id"] == task[1]) & (ok["attempt"] == task[2])
+    ]
+    conditions = sorted(subset["condition_id"].unique())
+    chosen = st.multiselect("条件", conditions, default=conditions, key="log_overlay_cond")
+    subset = subset[subset["condition_id"].isin(chosen)]
+    if subset.empty:
+        st.info("該当する試行がありません。")
+        return
+    by_answer: dict[str, list[pd.DataFrame]] = {}
+    for _, r in subset.iterrows():
+        by_answer.setdefault(_answer_label(r), []).append(moves_of(events, r["trial_id"]))
+    groups = sorted(by_answer.items(), key=lambda kv: -len(kv[1]))
+    first = subset.iloc[0]
+    st.plotly_chart(
+        charts.overlay_figure(groups, layout_of(events, first["trial_id"]), _aspect(first)),
+        width="stretch",
+        theme=None,  # 検証済みの配色を Streamlit のテーマで上書きさせない
+    )
+    st.caption("要素の枠は1件目の試行の配置。画面の大きさにより試行ごとに多少ずれる。")
 
 
 def _settings_tab(catalog: Catalog, repo: SqliteRepository, participants: pd.DataFrame) -> None:
@@ -172,10 +316,14 @@ def render() -> None:
     trials = to_frame("trials", repo.read_table("trials"))
     events = to_frame("events", repo.read_table("events"))
 
-    status_tab, revision_tab, settings_tab = st.tabs(["実施状況", "見直し", "条件設定"])
+    status_tab, revision_tab, log_tab, settings_tab = st.tabs(
+        ["実施状況", "見直し", "操作ログ", "条件設定"]
+    )
     with status_tab:
         _status_tab(participants, trials, events)
     with revision_tab:
         _revision_tab(trials)
+    with log_tab:
+        _log_tab(trials, events)
     with settings_tab:
         _settings_tab(catalog, repo, participants)

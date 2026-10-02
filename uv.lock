@@ -278,6 +278,7 @@ name = "cogexp"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "numpy" },
     { name = "pandas" },
     { name = "plotly" },
     { name = "pydantic" },
@@ -296,11 +297,12 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "numpy", specifier = ">=2.0" },
     { name = "pandas", specifier = ">=2.2" },
     { name = "plotly", specifier = ">=5.24" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "streamlit", specifier = ">=1.50" },
+    { name = "streamlit", specifier = ">=1.64" },
 ]
 
 [package.metadata.requires-dev]

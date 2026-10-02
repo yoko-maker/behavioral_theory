@@ -152,6 +152,17 @@ class SqliteRepository:
         conn.execute(f"INSERT INTO {table} ({cols}) VALUES ({marks})", list(encoded.values()))
 
     @staticmethod
+    def _insert_many(conn: sqlite3.Connection, table: str, rows: Iterable[Row]) -> None:
+        encoded = [encode_row(table, r) for r in rows]
+        if not encoded:
+            return
+        cols = ", ".join(encoded[0])
+        marks = ", ".join("?" for _ in encoded[0])
+        conn.executemany(
+            f"INSERT INTO {table} ({cols}) VALUES ({marks})", [list(e.values()) for e in encoded]
+        )
+
+    @staticmethod
     def _require_consent(conn: sqlite3.Connection, participant_id: object) -> None:
         cur = conn.execute(
             "SELECT consent_status FROM participants WHERE participant_id = ?", (participant_id,)
@@ -239,7 +250,11 @@ class SqliteRepository:
                 (status, completed_at.isoformat() if completed_at else None, participant_id),
             )
 
-    def save_trial(self, row: Row) -> SaveResult:
+    def save_trial(self, row: Row, events: Iterable[Row] = ()) -> SaveResult:
+        """試行とその操作イベントを同じトランザクションで保存する。
+
+        重複送信（同じ submission_id）の場合はイベントも保存しない。
+        """
         with self._tx() as conn:
             self._require_active(conn, row.get("participant_id"))
             try:
@@ -253,20 +268,49 @@ class SqliteRepository:
                 if cur.rowcount == 0:
                     raise
                 return SaveResult.DUPLICATE
+            # イベントの保存に失敗した場合は試行の行ごとロールバックされる
+            self._insert_many(conn, "events", events)
         return SaveResult.INSERTED
 
-    def set_confidence(self, trial_id: str, confidence: int, timing: str) -> bool:
-        """確信度を一度だけ設定する。既に設定済みなら False（上書きしない）。"""
+    def set_confidence(
+        self,
+        trial_id: str,
+        confidence: int,
+        timing: str,
+        *,
+        rt_client_ms: float | None = None,
+        revision_count: int | None = None,
+        log_status: str | None = None,
+        events: Iterable[Row] = (),
+    ) -> bool:
+        """確信度とその画面の操作ログを一度だけ保存する。
+
+        既に設定済みなら何もせず False（上書きしない。イベントも保存しない）。
+        """
+        events = list(events)
         with self._tx() as conn:
             cur = conn.execute("SELECT participant_id FROM trials WHERE trial_id = ?", (trial_id,))
             if (found := cur.fetchone()) is not None:
                 self._require_active(conn, found[0])
             cur = conn.execute(
-                "UPDATE trials SET confidence = ?, confidence_timing = ?"
+                "UPDATE trials SET confidence = ?, confidence_timing = ?,"
+                " confidence_rt_client_ms = ?, confidence_revision_count = ?,"
+                " confidence_client_log_status = ?, confidence_n_events = ?"
                 " WHERE trial_id = ? AND confidence IS NULL",
-                (confidence, timing, trial_id),
+                (
+                    confidence,
+                    timing,
+                    rt_client_ms,
+                    revision_count,
+                    log_status,
+                    len(events) if log_status is not None else None,
+                    trial_id,
+                ),
             )
-            return cur.rowcount == 1
+            if cur.rowcount != 1:
+                return False
+            self._insert_many(conn, "events", events)
+            return True
 
     def save_events(self, rows: Iterable[Row]) -> int:
         rows = list(rows)

@@ -65,3 +65,35 @@ def test_toggle_accepting_is_logged(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     stop.click().run()
     assert not repo.is_accepting("test_exp")
     assert len(repo.read_table("experiment_status_log")) == 2
+
+
+def test_log_tab_renders_with_events(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import os
+
+    from cogexp.config.loader import load_catalog
+    from cogexp.domain.clock import FakeClock
+    from cogexp.service import ParticipantService, ParticipantSession
+    from cogexp.storage.repository import SqliteRepository
+    from tests.conftest import client_payload, open_experiment
+
+    repo = SqliteRepository(tmp_path / "data" / "cogexp.sqlite")
+    open_experiment(repo)
+    svc = ParticipantService(
+        load_catalog(Path(os.environ["COGEXP_EXPERIMENTS_DIR"])), repo, FakeClock()
+    )
+    s = ParticipantSession(experiment_id="test_exp")
+    svc.start(s)
+    svc.agree(s)
+    svc.proceed(s)
+    svc.ensure_shown(s)
+    assert s.active is not None
+    svc.handle_client(s, client_payload(s.active.trial_id, choice_id="apple"))
+
+    monkeypatch.setenv("COGEXP_ADMIN_PASSWORD", "secret")
+    at = AppTest.from_function(_admin_page, default_timeout=30).run()
+    at.text_input[0].input("secret").run()
+    at.button[0].click().run()
+    assert not at.exception
+    assert len(at.get("plotly_chart")) == 2  # 1試行の軌跡・重ね合わせ
+    at.slider(key=f"log_upto_{s.last_trial_id}").set_value(250).run()
+    assert not at.exception

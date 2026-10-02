@@ -1,0 +1,145 @@
+/* 問題画面の部品。Streamlit のテーマ変数を使い、条件間で見た目を統一する */
+.cx-root {
+  font-family: var(--st-font, "Source Sans Pro", sans-serif);
+  color: var(--st-text-color, #31333f);
+  font-size: 1rem;
+  line-height: 1.6;
+  padding: 0.25rem 0 0.5rem;
+}
+
+.cx-caption {
+  font-size: 0.875rem;
+  opacity: 0.7;
+  margin-bottom: 0.5rem;
+}
+
+.cx-countdown {
+  margin-bottom: 1rem;
+}
+
+.cx-countdown-text {
+  font-size: 0.875rem;
+  margin-bottom: 0.25rem;
+}
+
+.cx-countdown-track {
+  height: 0.5rem;
+  border-radius: 0.25rem;
+  background: var(--st-secondary-background-color, #f0f2f6);
+  overflow: hidden;
+}
+
+.cx-countdown-bar {
+  height: 100%;
+  background: var(--st-primary-color, #ff4b4b);
+  transition: width 0.1s linear;
+}
+
+.cx-prompt {
+  white-space: pre-line;
+  margin-bottom: 1rem;
+}
+
+.cx-note {
+  background: var(--st-secondary-background-color, #f0f2f6);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.cx-choices {
+  border: 0;
+  padding: 0;
+  margin: 0 0 1rem;
+}
+
+.cx-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.5rem;
+  border: 1px solid var(--st-border-color, rgba(49, 51, 63, 0.2));
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+
+/* 確信度の段階：横に等幅で並べる（狭い画面では折り返す） */
+.cx-scale {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.cx-scale .cx-choice {
+  flex: 1 1 6rem;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  margin-bottom: 0;
+}
+
+.cx-choice-text {
+  white-space: pre-line;
+}
+
+.cx-choice input {
+  margin-top: 0.35rem;
+  accent-color: var(--st-primary-color, #ff4b4b);
+}
+
+.cx-input-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.875rem;
+  margin-bottom: 1rem;
+}
+
+.cx-input {
+  font: inherit;
+  font-size: 1rem;
+  max-width: 16rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--st-border-color, rgba(49, 51, 63, 0.2));
+  border-radius: 0.5rem;
+  background: var(--st-background-color, #fff);
+  color: inherit;
+}
+
+.cx-error {
+  color: #b42318;
+  min-height: 1.5rem;
+  font-size: 0.875rem;
+}
+
+.cx-submit {
+  font: inherit;
+  padding: 0.5rem 1.25rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: var(--st-primary-color, #ff4b4b);
+  color: #fff;
+  cursor: pointer;
+}
+
+.cx-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cx-submit:focus-visible,
+.cx-choice:focus-within,
+.cx-input:focus-visible {
+  outline: 2px solid var(--st-primary-color, #ff4b4b);
+  outline-offset: 2px;
+}
+
+.cx-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
