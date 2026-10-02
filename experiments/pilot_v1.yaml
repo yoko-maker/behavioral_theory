@@ -8,17 +8,21 @@ confidence_levels: 5
 counterbalance_order: true
 conditions:
   - condition_id: standard_nolimit
+    factors: { wording: standard, time_limit: none }
     variants: [linda/standard@1, bat_ball/standard@1]
 
   - condition_id: standard_limit
+    factors: { wording: standard, time_limit: limited }
     time_limit_sec: 15 # 2026-10-02 決定。予備実験の読解時間で妥当性を確認する
     show_countdown: true
     variants: [linda/standard@1, bat_ball/standard@1]
 
   - condition_id: reworded_nolimit
+    factors: { wording: reworded, time_limit: none }
     variants: [linda/frequency@1, bat_ball/explicit@1]
 
   - condition_id: reworded_limit
+    factors: { wording: reworded, time_limit: limited }
     time_limit_sec: 15 # 2026-10-02 決定。予備実験の読解時間で妥当性を確認する
     show_countdown: true
     variants: [linda/frequency@1, bat_ball/explicit@1]

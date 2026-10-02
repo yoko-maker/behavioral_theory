@@ -107,6 +107,9 @@ class Condition(_Frozen):
     collect_confidence: bool = True
     # 全問回答後に本課題を再提示し、見直し後の回答を別行で保存する（制限時間なし）
     allow_revision: bool = False
+    # 分析で使う要因と水準（例：{"wording": "standard", "time_limit": "limited"}）。
+    # 条件IDから暗黙に推測しない（docs/plans/phase4.md §2）
+    factors: dict[str, str] = Field(default_factory=dict)
     variants: tuple[str, ...] = Field(min_length=1)
 
     def variant_refs(self) -> tuple[VariantRef, ...]:
@@ -145,5 +148,8 @@ class Experiment(_Frozen):
         ids = [c.condition_id for c in self.conditions]
         if len(set(ids)) != len(ids):
             raise ValueError(f"{self.experiment_id}: condition_id が重複している")
+        factor_names = {tuple(sorted(c.factors)) for c in self.conditions}
+        if len(factor_names) > 1:
+            raise ValueError(f"{self.experiment_id}: 条件ごとに factors の要因名が異なる")
         self.practice_refs()
         return self

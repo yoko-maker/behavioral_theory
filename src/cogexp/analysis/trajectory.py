@@ -102,7 +102,7 @@ def _x_flips(xs: np.ndarray) -> int:
     return flips
 
 
-def _hidden_ms(ev: pd.DataFrame, end_ms: float) -> float:
+def hidden_ms(ev: pd.DataFrame, end_ms: float) -> float:
     hidden_since: float | None = None
     total = 0.0
     for _, row in ev[ev["event_type"] == "visibility"].sort_values("t_client_ms").iterrows():
@@ -156,7 +156,7 @@ def numeric_metrics(trials: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
                 ),
                 "入力操作数": len(times),
                 "削除操作数": sum(op == "delete" for op in ops),
-                "非表示時間_ms": _hidden_ms(ev, end_ms),
+                "非表示時間_ms": hidden_ms(ev, end_ms),
             }
         )
     return pd.DataFrame(rows, columns=NUMERIC_METRIC_COLUMNS)
@@ -314,7 +314,7 @@ def choice_metrics(trials: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
                 "最終回答以外への進入": (
                     int((enters["target_id"] != final).sum()) if pd.notna(final) else len(enters)
                 ),
-                "非表示時間_ms": _hidden_ms(ev, end_ms),
+                "非表示時間_ms": hidden_ms(ev, end_ms),
             }
         )
     return pd.DataFrame(rows, columns=METRIC_COLUMNS)

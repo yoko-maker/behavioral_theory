@@ -30,6 +30,7 @@ def make_experiments(tmp_path: Path) -> MakeExperiments:
         collect_confidence: bool = True,
         allow_revision: bool = False,
         counterbalance_order: bool = False,
+        factors: dict[str, str] | None = None,
         variants: tuple[str, ...] = ("linda/standard@1", "bat_ball/standard@1"),
         practice: tuple[str, ...] = ("practice/choice@1", "practice/numeric@1"),
     ) -> Path:
@@ -49,6 +50,7 @@ def make_experiments(tmp_path: Path) -> MakeExperiments:
                     "show_countdown": show_countdown,
                     "collect_confidence": collect_confidence,
                     "allow_revision": allow_revision,
+                    "factors": factors or {},
                     "variants": list(variants),
                 }
             ],

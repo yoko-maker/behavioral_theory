@@ -183,3 +183,76 @@ def overlay_figure(
                 )
             )
     return _base(fig, aspect, _extent(all_frames))
+
+
+def _axis(title: str) -> dict[str, object]:
+    return {
+        "showgrid": True,
+        "gridcolor": GRID,
+        "zeroline": False,
+        "linecolor": AXIS,
+        "tickfont": {"color": MUTED},
+        "title": {"text": title, "font": {"color": INK_SECONDARY}},
+    }
+
+
+def _plain_layout(fig: go.Figure, y_title: str, y_range: list[float] | None = None) -> go.Figure:
+    yaxis = _axis(y_title) | ({"range": y_range} if y_range else {})
+    fig.update_layout(
+        plot_bgcolor=SURFACE,
+        paper_bgcolor=SURFACE,
+        font={"family": 'system-ui, -apple-system, "Segoe UI", sans-serif', "color": INK},
+        margin={"l": 56, "r": 16, "t": 16, "b": 48},
+        height=320,
+        showlegend=False,
+        hoverlabel={"bgcolor": SURFACE, "font": {"color": INK}},
+        xaxis=_axis("") | {"showgrid": False},
+        yaxis=yaxis,
+    )
+    return fig
+
+
+def accuracy_figure(rows: pd.DataFrame, labels: Sequence[str]) -> go.Figure:
+    """条件ごとの正答率と 95% 信頼区間（点と誤差棒、1色。条件は横軸で区別）。"""
+    fig = go.Figure(
+        go.Scatter(
+            x=list(labels),
+            y=rows["正答率"],
+            mode="markers",
+            marker={"size": 10, "color": PATH, "line": {"color": SURFACE, "width": 2}},
+            error_y={
+                "type": "data",
+                "symmetric": False,
+                "array": rows["正答率95%CI上限"] - rows["正答率"],
+                "arrayminus": rows["正答率"] - rows["正答率95%CI下限"],
+                "color": PATH,
+                "thickness": 2,
+                "width": 6,
+            },
+            customdata=rows[["正答", "判定可能"]].to_numpy(),
+            hovertemplate="%{x}<br>正答率 %{y:.0%}（%{customdata[0]} / %{customdata[1]}）"
+            "<extra></extra>",
+        )
+    )
+    fig.update_yaxes(tickformat=".0%")
+    return _plain_layout(fig, "正答率（95%CI）", [-0.02, 1.02])
+
+
+def rt_figure(groups: Sequence[tuple[str, Sequence[float]]]) -> go.Figure:
+    """条件ごとの回答時間の分布（各試行の点と箱ひげ、1色）。"""
+    fig = go.Figure()
+    for label, values in groups:
+        fig.add_trace(
+            go.Box(
+                y=[v / 1000 for v in values],
+                name=label,
+                boxpoints="all",
+                jitter=0.3,
+                pointpos=0,
+                marker={"color": PATH, "size": 8, "opacity": 0.7},
+                line={"color": PATH, "width": 2},
+                fillcolor="rgba(42,120,214,0.10)",
+                hovertemplate=f"{label}<br>%{{y:.2f}} 秒<extra></extra>",
+            )
+        )
+    return _plain_layout(fig, "回答時間（秒）")

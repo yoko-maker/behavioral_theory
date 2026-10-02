@@ -97,3 +97,50 @@ def test_log_tab_renders_with_events(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert len(at.get("plotly_chart")) == 2  # 1試行の軌跡・重ね合わせ
     at.slider(key=f"log_upto_{s.last_trial_id}").set_value(250).run()
     assert not at.exception
+
+
+def test_analysis_tab_renders(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, make_experiments: MakeExperiments
+) -> None:
+    from cogexp.config.loader import load_catalog
+    from cogexp.domain.clock import FakeClock
+    from cogexp.domain.flow import Stage
+    from cogexp.service import ParticipantService, ParticipantSession
+    from cogexp.storage.repository import SqliteRepository
+    from tests.conftest import client_payload, open_experiment
+
+    root = make_experiments(factors={"wording": "standard", "time_limit": "none"})
+    monkeypatch.setenv("COGEXP_EXPERIMENTS_DIR", str(root))
+    repo = SqliteRepository(tmp_path / "data" / "cogexp.sqlite")
+    open_experiment(repo)
+    svc = ParticipantService(load_catalog(root), repo, FakeClock())
+    answers = {
+        "practice/choice@1": {"choice_id": "apple"},
+        "practice/numeric@1": {"raw_value": "7"},
+        "linda/standard@1": {"choice_id": "single"},
+        "bat_ball/standard@1": {"raw_value": "100"},
+    }
+    s = ParticipantSession(experiment_id="test_exp")
+    svc.start(s)
+    svc.agree(s)
+    while s.flow.stage is not Stage.END:
+        if s.flow.stage is Stage.TRIAL:
+            svc.ensure_shown(s)
+            item, _ = svc.current(s)
+            assert s.active is not None
+            svc.handle_client(s, client_payload(s.active.trial_id, **answers[str(item.ref)]))
+        elif s.flow.stage is Stage.CONFIDENCE:
+            svc.handle_confidence(s, client_payload(svc.confidence_screen_id(s), choice_id="4"))
+        else:
+            svc.proceed(s)
+
+    monkeypatch.setenv("COGEXP_ADMIN_PASSWORD", "secret")
+    at = AppTest.from_function(_admin_page, default_timeout=60).run()
+    at.text_input[0].input("secret").run()
+    at.button[0].click().run()
+    assert not at.exception
+    texts = " ".join(m.value for m in at.markdown)
+    assert "問題：linda" in " ".join(h.value for h in at.subheader)
+    assert "正答率・時間切れ率" in texts
+    # 要因の水準が1つしかないため回帰は推定できない旨を表示する（例外で止まらない）
+    assert any("推定できない" in c.value for c in at.caption)

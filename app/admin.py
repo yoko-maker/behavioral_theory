@@ -14,6 +14,19 @@ import resources
 import state
 import streamlit as st
 
+from cogexp.analysis.inference import (
+    LABELS,
+    accuracy_table,
+    confidence_table,
+    has_factors,
+    logistic_by_task,
+    metric_medians,
+    revision_table,
+    rt_table,
+    rt_tests,
+    wording_differences,
+)
+from cogexp.analysis.preprocess import REASONS, analysis_frame, exclusion_summary
 from cogexp.analysis.summary import (
     answer_distribution,
     cell_summary,
@@ -229,6 +242,114 @@ def _log_tab(trials: pd.DataFrame, events: pd.DataFrame) -> None:
     st.caption("要素の枠は1件目の試行の配置。画面の大きさにより試行ごとに多少ずれる。")
 
 
+def _condition_label(row: pd.Series) -> str:
+    w, t = row.get("factor_wording"), row.get("factor_time_limit")
+    if isinstance(w, str) and isinstance(t, str):
+        return f"{LABELS.get(w, w)}・{LABELS.get(t, t)}"
+    return str(row["condition_id"])
+
+
+def _show(title: str, table: pd.DataFrame, empty: str = "対象のデータがありません。") -> None:
+    st.markdown(f"**{title}**")
+    if table.empty:
+        st.caption(empty)
+    else:
+        st.dataframe(table, hide_index=True)
+
+
+def _analysis_tab(
+    catalog: Catalog, participants: pd.DataFrame, trials: pd.DataFrame, events: pd.DataFrame
+) -> None:
+    st.warning(
+        "すべて探索的分析です。予備実験の人数では推定が不安定で、条件間の差を結論づけるものでは"
+        "ありません。分析計画（除外基準・手法）は docs/plans/phase4.md で"
+        "データを見る前に固定しています。"
+    )
+    exp_id = st.selectbox("実験", list(catalog.experiments), key="analysis_exp")
+    experiment = catalog.experiments[exp_id]
+    frame = analysis_frame(experiment, participants, trials, events)
+    if frame.empty:
+        st.info("この実験の本課題のデータはまだありません。")
+        return
+    frame["条件"] = frame.apply(_condition_label, axis=1)
+    # 本人比・本人差は練習課題を基準にするため、練習を含む全試行から求める
+    conf_metrics = confidence_metrics(trials[trials["experiment_id"] == exp_id], events)
+
+    st.subheader("除外（初回回答）")
+    st.caption(
+        f"E1：{REASONS['E1']} ／ E2：{REASONS['E2']} ／ E3：{REASONS['E3']}。"
+        "判定は E1→E2→E3 の順。操作ログのない試行は E2 を判定できないため除外しない。"
+    )
+    st.dataframe(exclusion_summary(frame), hide_index=True)
+    if not has_factors(frame):
+        st.info("この実験の条件には要因（factors）が定義されていないため、要因の比較は行いません。")
+
+    for task, tf in frame.groupby("task_id"):
+        st.subheader(f"問題：{task}")
+        acc = accuracy_table(tf)
+        _show("正答率・時間切れ率（Wilson の 95%CI）", acc)
+        if not acc.empty:
+            labels = [_condition_label(r) for _, r in acc.iterrows()]
+            st.plotly_chart(
+                charts.accuracy_figure(acc, labels), width="stretch", theme=None, key=f"acc_{task}"
+            )
+        _show("正答率の差（言い換え − 標準、Newcombe の 95%CI）", wording_differences(tf))
+        model = logistic_by_task(tf).get(str(task))
+        st.markdown("**ロジスティック回帰：正答 ~ 表現 × 時間制限（オッズ比）**")
+        if isinstance(model, str):
+            st.caption(model)
+        elif model is not None:
+            st.dataframe(model, hide_index=True)
+
+        _show("回答時間（回答した試行、中央値と 95%CI）", rt_table(tf))
+        answered = tf[(tf["attempt"] == "initial") & tf["included"] & (tf["outcome"] == "answered")]
+        groups = [
+            (lbl, g["rt_analysis_ms"].astype(float).tolist()) for lbl, g in answered.groupby("条件")
+        ]
+        if groups:
+            st.plotly_chart(charts.rt_figure(groups), width="stretch", theme=None, key=f"rt_{task}")
+        _show(
+            "回答時間の比較（時間制限の水準ごと、Mann–Whitney）",
+            rt_tests(tf),
+            "要因が定義されていないか、比較できる試行がありません。",
+        )
+        st.caption("時間制限あり／なしの間は比較しない（制限ありでは 15 秒で打ち切られるため）。")
+
+        _show("確信度（正答・誤答別、平均と 95%CI）", confidence_table(tf))
+        _show(
+            "見直し（回答変化率と正答率の変化）",
+            revision_table(tf),
+            "見直しあり条件のデータがありません。",
+        )
+
+        st.markdown("**操作ログの指標（条件ごとの中央値と 95%CI、記述のみ）**")
+        ok = tf[tf["client_log_status"] == "ok"]
+        _show(
+            "回答の画面（選択式：軌跡）",
+            metric_medians(
+                tf,
+                choice_metrics(ok, events),
+                ["軌跡長_px", "x方向転換", "初動時間_ms", "最終回答以外への進入"],
+            ),
+        )
+        _show(
+            "回答の画面（数値入力式：キー操作）",
+            metric_medians(
+                tf,
+                numeric_metrics(ok, events),
+                ["最初の入力まで_ms", "最後の入力から確定まで_ms", "削除操作数"],
+            ),
+        )
+        _show(
+            "確信度の画面（主・補助指標）",
+            metric_medians(
+                tf,
+                conf_metrics,
+                ["選び直し", "確信度の回答時間_ms", "回答時間_本人比", "立ち止まった段階の数"],
+            ),
+        )
+
+
 def _settings_tab(catalog: Catalog, repo: SqliteRepository, participants: pd.DataFrame) -> None:
     st.caption("条件の変更は experiments/ の YAML で行う（docs/plans/phase2.md）。")
     svc = resources.experimenter_service()
@@ -318,8 +439,8 @@ def render() -> None:
     trials = to_frame("trials", repo.read_table("trials"))
     events = to_frame("events", repo.read_table("events"))
 
-    status_tab, revision_tab, log_tab, settings_tab = st.tabs(
-        ["実施状況", "見直し", "操作ログ", "条件設定"]
+    status_tab, revision_tab, log_tab, analysis_tab, settings_tab = st.tabs(
+        ["実施状況", "見直し", "操作ログ", "分析", "条件設定"]
     )
     with status_tab:
         _status_tab(participants, trials, events)
@@ -327,5 +448,7 @@ def render() -> None:
         _revision_tab(trials)
     with log_tab:
         _log_tab(trials, events)
+    with analysis_tab:
+        _analysis_tab(catalog, participants, trials, events)
     with settings_tab:
         _settings_tab(catalog, repo, participants)
