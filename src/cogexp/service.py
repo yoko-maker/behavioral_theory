@@ -438,6 +438,8 @@ class ParticipantService:
             "confidence_revision_count": None,
             "confidence_client_log_status": None,
             "confidence_n_events": None,
+            "confidence_panel_w": None,
+            "confidence_panel_h": None,
             # ブラウザで数えた変更回数（定義は docs/data_dictionary.md）。届かなければ空
             "revision_count": client.revision_count if client else None,
             "duplicate_submission_count": 0,
@@ -500,6 +502,8 @@ class ParticipantService:
                 rt_client_ms=client.sent_ms - client.shown_ms if client else None,
                 revision_count=client.revision_count if client else None,
                 log_status="ok" if client else "missing",
+                panel_w=client.client.panel_w if client else None,
+                panel_h=client.client.panel_h if client else None,
                 events=self._event_rows(s, s.last_trial_id, events, "confidence"),
             )
         except ParticipantAbortedError:

@@ -64,6 +64,8 @@ TABLES: dict[str, tuple[Column, ...]] = {
         Column("confidence_revision_count", "int", nullable=True),
         Column("confidence_client_log_status", "str", nullable=True),
         Column("confidence_n_events", "int", nullable=True),
+        Column("confidence_panel_w", "int", nullable=True),
+        Column("confidence_panel_h", "int", nullable=True),
         Column("revision_count", "int", nullable=True),
         Column("duplicate_submission_count", "int"),
         Column("client_log_status", "str"),

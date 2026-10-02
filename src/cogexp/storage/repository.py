@@ -281,6 +281,8 @@ class SqliteRepository:
         rt_client_ms: float | None = None,
         revision_count: int | None = None,
         log_status: str | None = None,
+        panel_w: int | None = None,
+        panel_h: int | None = None,
         events: Iterable[Row] = (),
     ) -> bool:
         """確信度とその画面の操作ログを一度だけ保存する。
@@ -295,7 +297,8 @@ class SqliteRepository:
             cur = conn.execute(
                 "UPDATE trials SET confidence = ?, confidence_timing = ?,"
                 " confidence_rt_client_ms = ?, confidence_revision_count = ?,"
-                " confidence_client_log_status = ?, confidence_n_events = ?"
+                " confidence_client_log_status = ?, confidence_n_events = ?,"
+                " confidence_panel_w = ?, confidence_panel_h = ?"
                 " WHERE trial_id = ? AND confidence IS NULL",
                 (
                     confidence,
@@ -304,6 +307,8 @@ class SqliteRepository:
                     revision_count,
                     log_status,
                     len(events) if log_status is not None else None,
+                    panel_w,
+                    panel_h,
                     trial_id,
                 ),
             )

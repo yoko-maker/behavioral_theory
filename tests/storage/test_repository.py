@@ -67,6 +67,8 @@ def trial(pid: str = "p1", trial_id: str = "t1", submission_id: str = "s1") -> d
         "confidence_revision_count": None,
         "confidence_client_log_status": None,
         "confidence_n_events": None,
+        "confidence_panel_w": None,
+        "confidence_panel_h": None,
         "revision_count": 0,
         "duplicate_submission_count": 0,
         "client_log_status": "ok",

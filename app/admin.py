@@ -156,8 +156,10 @@ def _log_tab(trials: pd.DataFrame, events: pd.DataFrame) -> None:
 
     st.subheader("確信度の画面の指標")
     st.caption(
-        "確信度を決めるまでの時間・選び直し・他の段階への出入りは迷いと関係しうる手がかりで、"
-        "迷いそのものではない。"
+        "迷いと関係しうる手がかりで、迷いそのものではない。主＝選び直し・回答時間、"
+        "補助＝立ち止まった段階の数（同じ枠で 200ms 以上・50px/秒未満）、それ以外は記述のみ。"
+        "本人比・本人差は同じ参加者の練習課題を基準にした値。"
+        "定義は docs/plans/confidence_metrics_definition.md。"
     )
     conf_table = ok[keys].merge(confidence_metrics(ok, events), on="trial_id")
     conf_table["participant_id"] = conf_table["participant_id"].str[:6]

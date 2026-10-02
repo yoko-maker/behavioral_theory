@@ -7,8 +7,11 @@ import pytest
 
 from cogexp.analysis.summary import to_frame
 from cogexp.analysis.trajectory import (
+    DWELL_MIN_MS,
+    STOP_MAX_PX_PER_S,
     choice_metrics,
     confidence_metrics,
+    count_dwells,
     layout_of,
     log_quality,
     moves_of,
@@ -34,6 +37,10 @@ def _trial(**kw: object) -> dict[str, object]:
         "confidence_rt_client_ms": 2500.0,
         "confidence_revision_count": 1,
         "confidence_client_log_status": "ok",
+        "confidence_panel_w": 1000,
+        "confidence_panel_h": 200,
+        "participant_id": "p1",
+        "is_practice": False,
     }
     return base | kw
 
@@ -200,3 +207,100 @@ def test_confidence_phase_is_separated() -> None:
 def test_confidence_metrics_skip_missing_logs() -> None:
     trials = to_frame("trials", [_trial(confidence_client_log_status="missing")])
     assert confidence_metrics(trials, to_frame("events", [])).empty
+
+
+# --- 立ち止まり（docs/plans/confidence_metrics_definition.md §4） -----------------------
+
+RECTS = {"1": [0.0, 0.0, 0.2, 1.0], "2": [0.2, 0.0, 0.4, 1.0], "3": [0.4, 0.0, 0.6, 1.0]}
+W, H = 1000.0, 200.0  # 正規化 0.001 = 1px（x 方向）
+
+
+def _moves(points: list[tuple[float, float, float]]) -> pd.DataFrame:
+    return pd.DataFrame(points, columns=["t_client_ms", "x_norm", "y_norm"])
+
+
+def _slow_path(start_t: float, x: float, duration: float, step_ms: float = 20) -> list:
+    """速さ 25 px/秒（V_stop 未満）で duration ms 動く点列。"""
+    n = int(duration / step_ms)
+    return [(start_t + i * step_ms, x + i * 0.0005, 0.5) for i in range(n + 1)]
+
+
+def test_dwell_threshold_boundary() -> None:
+    assert count_dwells(_moves(_slow_path(0, 0.25, DWELL_MIN_MS)), RECTS, W, H) == {"2": 1}
+    assert count_dwells(_moves(_slow_path(0, 0.25, DWELL_MIN_MS - 20)), RECTS, W, H) == {}
+
+
+def test_speed_threshold_is_strict() -> None:
+    # ちょうど V_stop（50 px/秒）は「止まっている」とみなさない
+    step = 20.0
+    dx = STOP_MAX_PX_PER_S * (step / 1000.0) / W
+    pts = [(i * step, 0.25 + i * dx, 0.5) for i in range(20)]
+    assert count_dwells(_moves(pts), RECTS, W, H) == {}
+
+
+def test_fidgeting_inside_box_is_not_a_dwell() -> None:
+    """枠の中でカーソルを回し続けている（速い）状態は数えない。"""
+    pts = []
+    for i in range(60):  # 1.2 秒間、半径 20px の円を描く
+        angle = i * 0.6
+        pts.append((i * 20.0, 0.3 + 0.02 * math.cos(angle), 0.5 + 0.1 * math.sin(angle)))
+    assert count_dwells(_moves(pts), RECTS, W, H) == {}
+
+
+def test_two_stops_in_same_box_count_twice() -> None:
+    first = _slow_path(0, 0.21, 300)
+    jump = [(320, 0.30, 0.5)]  # 速く動いて一度区切る
+    second = _slow_path(340, 0.30, 300)
+    assert count_dwells(_moves(first + jump + second), RECTS, W, H) == {"2": 2}
+
+
+def test_resting_cursor_counts_as_stopped() -> None:
+    # 静止中は移動が記録されない。次の小さな移動までの時間を止まっていた時間とみなす
+    pts = [(0.0, 0.45, 0.5), (800.0, 0.451, 0.5)]
+    assert count_dwells(_moves(pts), RECTS, W, H) == {"3": 1}
+
+
+def _conf_layout(trial_id: str = "t1") -> dict[str, object]:
+    rects = {f"choice:{k}": v for k, v in RECTS.items()}
+    return _ev(4000, "layout", payload={"rects": rects}, trial_id=trial_id, phase="confidence")
+
+
+def test_confidence_metrics_dwell_and_baseline() -> None:
+    def screen(trial_id: str, stops_on: list[float], start: float) -> list[dict[str, object]]:
+        evs = [_conf_layout(trial_id)]
+        t = start
+        for x in stops_on:
+            for tt, xx, yy in _slow_path(t, x, 300):
+                evs.append(_ev(tt, "move", xx, yy, trial_id=trial_id, phase="confidence"))
+            t += 400
+        return evs
+
+    events = to_frame(
+        "events",
+        screen("p_a", [0.05], 5000)  # 練習：選んだ「1」で止まるだけ → 0
+        + screen("p_b", [0.25, 0.05], 5000)  # 練習：「2」で1回 → 1
+        + screen("m", [0.25, 0.45, 0.05], 5000),  # 本番：「2」「3」で止まる → 2
+    )
+    trials = to_frame(
+        "trials",
+        [
+            _trial(trial_id="p_a", is_practice=True, confidence=1, confidence_rt_client_ms=1000.0),
+            _trial(trial_id="p_b", is_practice=True, confidence=1, confidence_rt_client_ms=3000.0),
+            _trial(trial_id="m", confidence=1, confidence_rt_client_ms=4000.0),
+        ],
+    )
+    rows = confidence_metrics(trials, events).set_index("trial_id")
+    assert rows.loc["m", "立ち止まった段階の数"] == 2
+    assert rows.loc["m", "立ち止まり_本人差"] == 2 - 0.5
+    assert rows.loc["m", "回答時間_本人比"] == 4000.0 / 2000.0
+    # 練習の行は基準そのものなので補正値は出さない
+    assert math.isnan(rows.loc["p_a", "回答時間_本人比"])
+    assert rows["手の動きの量_px毎秒"].nunique() == 1
+
+
+def test_no_pointer_movement_is_missing_not_zero() -> None:
+    events = to_frame("events", [_conf_layout()])
+    [c] = confidence_metrics(to_frame("trials", [_trial()]), events).to_dict("records")
+    assert math.isnan(c["立ち止まった段階の数"]) and math.isnan(c["x方向転換"])
+    assert c["移動点数"] == 0
+    assert c["選び直し"] == 1  # クリック由来の指標は残る

@@ -62,6 +62,8 @@
 | `confidence_revision_count` | int | 可 | 確信度の画面で、最初の選択後に選び直した回数 |
 | `confidence_client_log_status` | str | 可 | 確信度の画面の操作ログの状態（`ok` / `missing`）。確信度を取得しない場合は空 |
 | `confidence_n_events` | int | 可 | 確信度の画面で保存した操作イベントの数 |
+| `confidence_panel_w` | int | 可 | 確信度の画面の部品の幅（CSS px。確信度の画面の座標正規化の基準） |
+| `confidence_panel_h` | int | 可 | 同 高さ |
 | `revision_count` | int | 可 | ブラウザで数えた変更回数。選択式は最初の選択後に選択を変えた回数（見直しで初回回答が選択済みの場合は最初の変更から数える）。数値入力式は文字を削除した操作の回数。ブラウザから届かなかった場合は空（2026-10-02 以前のデータでは数値入力式は常に空） |
 | `duplicate_submission_count` | int | 不可 | 同一 `submission_id` で重複送信を検知した回数 |
 | `client_log_status` | str | 不可 | `ok`（ブラウザから操作ログが届いた）/ `missing`（届かずサーバー側だけで記録した。例：ブラウザの時間切れ通知が届かないままサーバーが時間切れにした） |
